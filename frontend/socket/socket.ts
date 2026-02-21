@@ -16,8 +16,8 @@ const getSocketURL = async (): Promise<string> => {
     console.warn("[DEBUG] Socket: Failed to load saved server IP");
   }
   
-  // Fallback to local network IP
-  return "http://172.25.251.53:3000";
+  // Fallback to production URL
+  return "https://chatzi-1m0m.onrender.com";
 };
 
 export const connectSocket = async (): Promise<Socket> => {

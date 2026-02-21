@@ -55,9 +55,9 @@ export const getApiUrl = async (): Promise<string> => {
       console.warn("[DEBUG] API Configuration: IP discovery failed for Android");
     }
     
-    // Fallback to local network IP for physical device
-    cachedApiUrl = "http://172.25.251.53:3000/api";
-    console.log("[DEBUG] API Configuration: Android - using fallback IP");
+    // Fallback to production URL
+    cachedApiUrl = "https://chatzi-1m0m.onrender.com/api";
+    console.log("[DEBUG] API Configuration: Android - using production URL");
     return cachedApiUrl;
   }
 
@@ -73,9 +73,9 @@ export const getApiUrl = async (): Promise<string> => {
     console.warn("[DEBUG] API Configuration: IP discovery failed");
   }
   
-  // Fallback to local network IP
-  cachedApiUrl = "http://172.25.251.53:3000/api";
-  console.warn("[DEBUG] API Configuration: Using fallback IP");
+  // Fallback to production URL
+  cachedApiUrl = "https://chatzi-1m0m.onrender.com/api";
+  console.warn("[DEBUG] API Configuration: Using production URL");
   
   console.log("[DEBUG] API Configuration for Physical Device (Expo Go)");
   console.log("[DEBUG] API_URL:", cachedApiUrl);
@@ -102,7 +102,7 @@ export const clearCachedUrl = () => {
 
 // Legacy export for backward compatibility
 // Use getApiUrl() instead for dynamic IP resolution
-export const API_URL = "http://172.25.251.53:3000/api";
+export const API_URL = "https://chatzi-1m0m.onrender.com/api";
 
 // ============================================================
 // CONFIGURATION LOGGING
