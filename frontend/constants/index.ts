@@ -13,75 +13,17 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 let cachedApiUrl: string | null = null;
 
 /**
- * Get the API URL - dynamically discovers server IP if needed
- * This function handles the IP address automatically
+ * Get the API URL - uses direct local IP for faster connection
  */
 export const getApiUrl = async (): Promise<string> => {
   if (cachedApiUrl) {
     return cachedApiUrl;
   }
 
-  // First, check if user has configured a custom server IP
-  try {
-    const savedIP = await AsyncStorage.getItem('serverIP');
-    if (savedIP) {
-      cachedApiUrl = `http://${savedIP}:3000/api`;
-      console.log("[DEBUG] API Configuration: Using saved server IP:", savedIP);
-      return cachedApiUrl;
-    }
-  } catch (error) {
-    console.warn("[DEBUG] Failed to load saved server IP:", error);
-  }
-
-  // For iOS simulator
-  if (Platform.OS === "ios") {
-    cachedApiUrl = "http://localhost:3000/api";
-    console.log("[DEBUG] API Configuration: iOS simulator - using localhost");
-    return cachedApiUrl;
-  }
-
-  // For Android emulator  
-  if (Platform.OS === "android") {
-    // For physical devices, always try to discover IP
-    // Emulators would use 10.0.2.2, but we're targeting physical devices
-    try {
-      const ip = await getLocalIP();
-      if (ip) {
-        cachedApiUrl = `http://${ip}:3000/api`;
-        console.log("[DEBUG] API Configuration: Android physical device - discovered IP:", ip);
-        return cachedApiUrl;
-      }
-    } catch (error) {
-      console.warn("[DEBUG] API Configuration: IP discovery failed for Android");
-    }
-    
-    // Fallback to production URL
-    cachedApiUrl = "https://chatzi-1m0m.onrender.com/api";
-    console.log("[DEBUG] API Configuration: Android - using production URL");
-    return cachedApiUrl;
-  }
-
-  // For physical device (Expo Go) - try to discover IP
-  try {
-    const ip = await getLocalIP();
-    if (ip) {
-      cachedApiUrl = `http://${ip}:3000/api`;
-      console.log("[DEBUG] API Configuration: Physical device - discovered IP:", ip);
-      return cachedApiUrl;
-    }
-  } catch (error) {
-    console.warn("[DEBUG] API Configuration: IP discovery failed");
-  }
-  
-  // Fallback to production URL
-  cachedApiUrl = "https://chatzi-1m0m.onrender.com/api";
-  console.warn("[DEBUG] API Configuration: Using production URL");
-  
-  console.log("[DEBUG] API Configuration for Physical Device (Expo Go)");
-  console.log("[DEBUG] API_URL:", cachedApiUrl);
-  console.log("[DEBUG] Platform:", Platform.OS);
-  console.log("=".repeat(60));
-  
+  // Use local IP directly - much faster than checking AsyncStorage
+  // The IP 172.25.250.173 is the computer's IP on the network
+  cachedApiUrl = "http://172.25.250.173:3000/api";
+  console.log("[DEBUG] API Configuration: Using local IP for fast connection");
   return cachedApiUrl;
 };
 

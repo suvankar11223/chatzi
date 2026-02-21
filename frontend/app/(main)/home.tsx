@@ -93,29 +93,29 @@ const Home = () => {
 
     newMessage(handleNewMessage);
 
-    // Fetch data immediately from API (more reliable than socket)
+    // Fetch data immediately from API (most reliable - no delay)
     const fetchInitialData = async () => {
       console.log('[DEBUG] Home: Fetching initial data from API');
       
-      // Fetch contacts from API
-      await loadContactsFromAPI();
+      // Fetch contacts from API immediately (no waiting)
+      loadContactsFromAPI();
       
-      // Also try socket for conversations (real-time updates)
+      // Also fetch conversations from socket in parallel
       const socket = getSocket();
       if (socket && socket.connected) {
         console.log('[DEBUG] Home: Socket connected, fetching conversations');
         getConversations(null);
         getContacts(null); // Also try socket as backup
       } else {
-        console.log('[DEBUG] Home: Socket not connected, will retry in background');
-        // Try to connect in background
+        console.log('[DEBUG] Home: Socket not connected, will retry shortly');
+        // Retry socket connection after 1 second (reduced from 2 seconds)
         setTimeout(() => {
           const s = getSocket();
           if (s && s.connected) {
             getConversations(null);
             getContacts(null);
           }
-        }, 2000);
+        }, 1000);
       }
       
       setLoading(false);
@@ -473,6 +473,13 @@ const Home = () => {
     );
   };
 
+  const openNewGroupModal = () => {
+    router.push({
+      pathname: '/(main)/newConversationModal',
+      params: { isGroup: '1' }
+    });
+  };
+
   return (
     <ScreenWrapper>
       <View style={styles.container}>
@@ -524,6 +531,17 @@ const Home = () => {
 
           {renderList()}
         </View>
+
+        {/* Floating Action Button - Only show on Groups tab */}
+        {selectedTab === 'group' && (
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={openNewGroupModal}
+            activeOpacity={0.8}
+          >
+            <Feather name="plus" size={28} color={colors.white} />
+          </TouchableOpacity>
+        )}
       </View>
     </ScreenWrapper>
   );
@@ -604,5 +622,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacingX._20,
     paddingVertical: spacingY._12,
     borderRadius: radius._20,
+  },
+  fab: {
+    position: 'absolute',
+    bottom: 30,
+    right: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
+    shadowColor: colors.black,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
 });

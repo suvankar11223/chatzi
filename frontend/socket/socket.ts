@@ -4,20 +4,11 @@ import { io, Socket } from "socket.io-client";
 let socket: Socket | null = null;
 let connectionPromise: Promise<Socket> | null = null;
 
-// Get socket URL from saved server IP or fallback
+// Get socket URL - use local IP directly for faster connection
 const getSocketURL = async (): Promise<string> => {
-  try {
-    const savedIP = await AsyncStorage.getItem('serverIP');
-    if (savedIP) {
-      console.log("[DEBUG] Socket: Using saved server IP:", savedIP);
-      return `http://${savedIP}:3000`;
-    }
-  } catch (error) {
-    console.warn("[DEBUG] Socket: Failed to load saved server IP");
-  }
-  
-  // Fallback to production URL
-  return "https://chatzi-1m0m.onrender.com";
+  // Use local IP directly - much faster than checking AsyncStorage
+  // The IP 172.25.250.173 is the computer's IP on the network
+  return "http://172.25.250.173:3000";
 };
 
 export const connectSocket = async (): Promise<Socket> => {
@@ -56,10 +47,10 @@ export const connectSocket = async (): Promise<Socket> => {
     },
     transports: ["polling"], // Use polling only - more reliable for React Native
     reconnection: true,
-    reconnectionAttempts: 10,
-    reconnectionDelay: 2000,
-    reconnectionDelayMax: 10000,
-    timeout: 30000,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 500, // Reduced from 2000ms to 500ms for faster reconnection
+    reconnectionDelayMax: 3000,
+    timeout: 10000,
     forceNew: true,
   });
 
