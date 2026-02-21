@@ -1,5 +1,5 @@
 import * as Contacts from 'expo-contacts';
-import { Platform, Alert } from 'react-native';
+import { Alert } from 'react-native';
 
 export interface PhoneContact {
   id: string;
