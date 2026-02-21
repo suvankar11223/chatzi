@@ -151,48 +151,69 @@ export const matchContactsWithUsers = (
 
 /**
  * Fetch contacts (other users) from the backend via REST API
+ * Includes retry logic with exponential backoff
  */
-export const fetchContactsFromAPI = async (token: string): Promise<any[]> => {
-  try {
-    const { getApiUrl } = await import("@/constants");
-    const API_URL = await getApiUrl();
-    const url = `${API_URL}/user/contacts`;
-    
-    console.log('[DEBUG] Fetching contacts from API:', url);
-    console.log('[DEBUG] Using token:', token ? `${token.substring(0, 20)}...` : 'NO TOKEN');
-    
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-    });
+export const fetchContactsFromAPI = async (token: string, retries = 3): Promise<any[]> => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const { getApiUrl } = await import("@/constants");
+      const API_URL = await getApiUrl();
+      const url = `${API_URL}/user/contacts`;
+      
+      console.log(`[DEBUG] Fetching contacts from API (attempt ${attempt}/${retries}):`, url);
+      console.log('[DEBUG] Using token:', token ? `${token.substring(0, 20)}...` : 'NO TOKEN');
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        signal: controller.signal,
+      });
 
-    console.log('[DEBUG] API response status:', response.status);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[DEBUG] API error response:', errorText);
-      throw new Error(`HTTP ${response.status}: ${errorText}`);
+      clearTimeout(timeoutId);
+      
+      console.log('[DEBUG] API response status:', response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[DEBUG] API error response:', errorText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log('[DEBUG] API contacts response:', {
+        success: data.success,
+        count: data.data?.length || 0,
+        names: data.data?.map((u: any) => u.name).join(', ') || 'none'
+      });
+
+      if (data.success) {
+        console.log('[DEBUG] ✓ Successfully fetched', data.data.length, 'contacts from API');
+        return data.data;
+      } else {
+        console.error('[DEBUG] API returned success=false:', data.msg);
+        return [];
+      }
+    } catch (error: any) {
+      console.error(`[DEBUG] ✗ Error fetching contacts (attempt ${attempt}/${retries}):`, error.message || error);
+      
+      // If this is the last attempt, return empty array
+      if (attempt === retries) {
+        console.error('[DEBUG] All retry attempts failed');
+        return [];
+      }
+      
+      // Wait before retrying (exponential backoff: 1s, 2s, 4s)
+      const waitTime = Math.pow(2, attempt - 1) * 1000;
+      console.log(`[DEBUG] Waiting ${waitTime}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
     }
-
-    const data = await response.json();
-    console.log('[DEBUG] API contacts response:', {
-      success: data.success,
-      count: data.data?.length || 0,
-      names: data.data?.map((u: any) => u.name).join(', ') || 'none'
-    });
-
-    if (data.success) {
-      console.log('[DEBUG] ✓ Successfully fetched', data.data.length, 'contacts from API');
-      return data.data;
-    } else {
-      console.error('[DEBUG] API returned success=false:', data.msg);
-      return [];
-    }
-  } catch (error: any) {
-    console.error('[DEBUG] ✗ Error fetching contacts from API:', error.message || error);
-    return [];
   }
+  
+  return [];
 };

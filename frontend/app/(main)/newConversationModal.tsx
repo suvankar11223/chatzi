@@ -190,42 +190,84 @@ const NewConversationModal = () => {
 
       let avatar = null;
       if (groupAvatar) {
+        console.log("[DEBUG] Uploading group avatar...");
         avatar = await uploadImageToCloudinary(groupAvatar.uri);
+        console.log("[DEBUG] Avatar uploaded:", avatar);
       }
       
       // Include current user in participants
       const allParticipants = [currentUserId, ...selectedParticipants];
 
       console.log("[DEBUG] Creating group with participants:", allParticipants);
+      console.log("[DEBUG] Group name:", groupName);
+      console.log("[DEBUG] Group avatar:", avatar);
       
-      // Navigate immediately
-      const groupId = `group_${Date.now()}`;
-      router.back();
-      router.push({
-        pathname: "/(main)/conversation",
-        params: {
-          id: groupId,
-          name: groupName,
-          avatar: avatar || null,
-          type: "group",
-          participants: JSON.stringify(allParticipants.map(id => ({ _id: id }))),
-        },
-      });
-      
-      // Create conversation in background
+      // Create conversation via socket and WAIT for response
       const socket = getSocket();
-      if (socket && socket.connected) {
-        const payload = {
-          type: "group",
-          name: groupName,
-          participants: allParticipants,
-          avatar: avatar || "",
-        };
-        console.log("[DEBUG] Creating group in background:", JSON.stringify(payload, null, 2));
-        socket.emit("newConversation", payload);
+      if (!socket || !socket.connected) {
+        Alert.alert("Connection Error", "Socket not connected. Please try again.");
+        setIsLoading(false);
+        return;
       }
+
+      const payload = {
+        type: "group",
+        name: groupName,
+        participants: allParticipants,
+        avatar: avatar || "",
+      };
       
-      setIsLoading(false);
+      console.log("[DEBUG] Emitting newConversation:", JSON.stringify(payload, null, 2));
+      
+      // Listen for response
+      const handleNewConversation = (response: any) => {
+        console.log("[DEBUG] Got newConversation response:", response);
+        
+        // Remove listener
+        socket.off("newConversation", handleNewConversation);
+        
+        if (response.success && response.data) {
+          const conversation = response.data;
+          console.log("[DEBUG] Group created successfully:", conversation._id);
+          
+          setIsLoading(false);
+          
+          // Navigate to the group conversation
+          router.back(); // Close modal first
+          
+          // Small delay to ensure modal is closed
+          setTimeout(() => {
+            router.push({
+              pathname: "/(main)/conversation",
+              params: {
+                id: conversation._id,
+                name: groupName,
+                avatar: avatar || '',
+                type: "group",
+                participants: JSON.stringify(conversation.participants),
+              },
+            });
+          }, 100);
+        } else {
+          setIsLoading(false);
+          Alert.alert("Error", response.msg || "Failed to create group");
+        }
+      };
+      
+      // Set up listener
+      socket.on("newConversation", handleNewConversation);
+      
+      // Emit the request
+      socket.emit("newConversation", payload);
+      
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        socket.off("newConversation", handleNewConversation);
+        if (isLoading) {
+          setIsLoading(false);
+          Alert.alert("Timeout", "Failed to create group. Please try again.");
+        }
+      }, 10000);
       
     } catch (error) {
       console.error("[DEBUG] Error creating group:", error);

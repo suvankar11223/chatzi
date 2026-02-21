@@ -255,7 +255,22 @@ const Home = () => {
   useFocusEffect(
     React.useCallback(() => {
       console.log('[DEBUG] Home: Screen focused, refreshing conversations');
-      refreshConversations();
+      
+      // Fetch conversations from socket
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        console.log('[DEBUG] Home: Socket connected, fetching conversations');
+        getConversations(null);
+      } else {
+        console.log('[DEBUG] Home: Socket not connected, will retry');
+        // Try to reconnect
+        setTimeout(() => {
+          const s = getSocket();
+          if (s && s.connected) {
+            getConversations(null);
+          }
+        }, 1000);
+      }
       
       // Return cleanup function
       return () => {

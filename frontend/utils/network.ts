@@ -2,7 +2,7 @@ import { Platform } from "react-native";
 
 // Static IP - this is the IP of your computer on the network
 // Change this if your computer's IP changes
-const COMPUTER_IP = "172.25.250.173";
+const COMPUTER_IP = "172.25.254.47";
 
 /**
  * Get the server IP address.

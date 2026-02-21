@@ -1,14 +1,20 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { io, Socket } from "socket.io-client";
+import { getLocalIP } from "@/utils/network";
 
 let socket: Socket | null = null;
 let connectionPromise: Promise<Socket> | null = null;
 
-// Get socket URL - use local IP directly for faster connection
+// Get socket URL from network utility
 const getSocketURL = async (): Promise<string> => {
-  // Use local IP directly - much faster than checking AsyncStorage
-  // The IP 172.25.250.173 is the computer's IP on the network
-  return "http://172.25.250.173:3000";
+  try {
+    const ip = await getLocalIP();
+    console.log("[DEBUG] Socket: Using IP from network utility:", ip);
+    return `http://${ip}:3000`;
+  } catch (error) {
+    console.warn("[DEBUG] Socket: Failed to get IP, using fallback");
+    return "https://chatzi-1m0m.onrender.com";
+  }
 };
 
 export const connectSocket = async (): Promise<Socket> => {

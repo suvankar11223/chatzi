@@ -13,17 +13,37 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 let cachedApiUrl: string | null = null;
 
 /**
- * Get the API URL - uses direct local IP for faster connection
+ * Get the API URL - dynamically discovers server IP if needed
+ * This function handles the IP address automatically
  */
 export const getApiUrl = async (): Promise<string> => {
   if (cachedApiUrl) {
     return cachedApiUrl;
   }
 
-  // Use local IP directly - much faster than checking AsyncStorage
-  // The IP 172.25.250.173 is the computer's IP on the network
-  cachedApiUrl = "http://172.25.250.173:3000/api";
-  console.log("[DEBUG] API Configuration: Using local IP for fast connection");
+  // For iOS simulator
+  if (Platform.OS === "ios") {
+    cachedApiUrl = "http://localhost:3000/api";
+    console.log("[DEBUG] API Configuration: iOS simulator - using localhost");
+    return cachedApiUrl;
+  }
+
+  // For Android/physical device - use the network utility's IP
+  try {
+    const ip = await getLocalIP();
+    if (ip) {
+      cachedApiUrl = `http://${ip}:3000/api`;
+      console.log("[DEBUG] API Configuration: Using IP from network utility:", ip);
+      return cachedApiUrl;
+    }
+  } catch (error) {
+    console.warn("[DEBUG] API Configuration: IP discovery failed");
+  }
+  
+  // Fallback to production URL
+  cachedApiUrl = "https://chatzi-1m0m.onrender.com/api";
+  console.warn("[DEBUG] API Configuration: Using production URL");
+  
   return cachedApiUrl;
 };
 
