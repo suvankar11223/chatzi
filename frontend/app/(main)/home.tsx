@@ -43,10 +43,10 @@ const Home = () => {
 
 
   useEffect(() => {
-    console.log('[DEBUG] Home: Component mounted, setting up socket listeners');
+    console.log('[DEBUG] Home: Component mounted, fetching data');
     setLoading(true);
     
-    // Setup socket listeners
+    // Setup socket listeners for real-time updates
     getConversations(processConversations);
     newConversation(newConversationHandler);
     getContacts(processContacts);
@@ -92,46 +92,35 @@ const Home = () => {
 
     newMessage(handleNewMessage);
 
-    // Function to fetch data once socket is connected
-    const fetchDataWhenConnected = async () => {
-      let attempts = 0;
-      const maxAttempts = 20; // Try for 10 seconds (20 * 500ms)
+    // Fetch data immediately from API (more reliable than socket)
+    const fetchInitialData = async () => {
+      console.log('[DEBUG] Home: Fetching initial data from API');
       
-      const checkAndFetch = async () => {
-        const socket = getSocket();
-        attempts++;
-        
-        console.log(`[DEBUG] Home: Checking socket connection (attempt ${attempts}/${maxAttempts})`);
-        
-        if (socket && socket.connected) {
-          console.log('[DEBUG] Home: Socket connected! Fetching data...');
-          
-          // Wait a bit to ensure socket is fully ready
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          // Emit requests
-          getConversations(null);
-          getContacts(null);
-          
-          setLoading(false);
-          return true;
-        } else if (attempts < maxAttempts) {
-          // Try again after 500ms
-          await new Promise(resolve => setTimeout(resolve, 500));
-          return checkAndFetch();
-        } else {
-          console.log('[DEBUG] Home: Socket connection timeout, trying API fallback');
-          loadContactsFromAPI();
-          setLoading(false);
-          return false;
-        }
-      };
+      // Fetch contacts from API
+      await loadContactsFromAPI();
       
-      return checkAndFetch();
+      // Also try socket for conversations (real-time updates)
+      const socket = getSocket();
+      if (socket && socket.connected) {
+        console.log('[DEBUG] Home: Socket connected, fetching conversations');
+        getConversations(null);
+        getContacts(null); // Also try socket as backup
+      } else {
+        console.log('[DEBUG] Home: Socket not connected, will retry in background');
+        // Try to connect in background
+        setTimeout(() => {
+          const s = getSocket();
+          if (s && s.connected) {
+            getConversations(null);
+            getContacts(null);
+          }
+        }, 2000);
+      }
+      
+      setLoading(false);
     };
 
-    // Start checking for connection
-    fetchDataWhenConnected();
+    fetchInitialData();
 
     return () => {
       console.log('[DEBUG] Home: Cleaning up socket listeners');
@@ -161,19 +150,31 @@ const Home = () => {
   // Fallback function to load contacts from API
   const loadContactsFromAPI = async () => {
     try {
-      console.log('[DEBUG] Loading contacts from API as fallback');
+      console.log('[DEBUG] Loading contacts from API');
       const token = await AsyncStorage.getItem('token');
       if (!token) {
         console.log('[DEBUG] No token found');
+        setLoading(false);
         return;
       }
+      
       const apiContacts = await fetchContactsFromAPI(token);
+      console.log('[DEBUG] API returned:', apiContacts?.length || 0, 'contacts');
+      
       if (apiContacts && apiContacts.length > 0) {
         console.log('[DEBUG] Loaded', apiContacts.length, 'contacts from API');
+        console.log('[DEBUG] Contact names:', apiContacts.map((c: any) => c.name).join(', '));
         setContacts(apiContacts);
+        setLoading(false);
+      } else {
+        console.log('[DEBUG] No contacts returned from API');
+        setContacts([]);
+        setLoading(false);
       }
     } catch (error) {
       console.error('[DEBUG] Error loading contacts from API:', error);
+      setContacts([]);
+      setLoading(false);
     }
   };
 
