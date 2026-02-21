@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "name": "Auto Fix Errors on Save",
+  "description": "Automatically checks for TypeScript/ESLint errors when you save a file and fixes them while maintaining code logic",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.ts",
+      "*.tsx",
+      "*.js",
+      "*.jsx"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check this file for any TypeScript, ESLint, or syntax errors. If you find any errors, fix them while maintaining the existing code logic and functionality. Don't remove code unless it's truly unused - prefer fixing it properly."
+  },
+  "workspaceFolderName": "chat-app",
+  "shortName": "auto-fix-errors"
+}
