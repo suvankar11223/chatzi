@@ -154,10 +154,14 @@ export const matchContactsWithUsers = (
  */
 export const fetchContactsFromAPI = async (token: string): Promise<any[]> => {
   try {
-    const { API_URL } = await import("@/constants");
-    console.log('[DEBUG] Fetching contacts from API:', `${API_URL}/user/contacts`);
+    const { getApiUrl } = await import("@/constants");
+    const API_URL = await getApiUrl();
+    const url = `${API_URL}/user/contacts`;
     
-    const response = await fetch(`${API_URL}/user/contacts`, {
+    console.log('[DEBUG] Fetching contacts from API:', url);
+    console.log('[DEBUG] Using token:', token ? `${token.substring(0, 20)}...` : 'NO TOKEN');
+    
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -165,18 +169,30 @@ export const fetchContactsFromAPI = async (token: string): Promise<any[]> => {
       },
     });
 
+    console.log('[DEBUG] API response status:', response.status);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[DEBUG] API error response:', errorText);
+      throw new Error(`HTTP ${response.status}: ${errorText}`);
+    }
+
     const data = await response.json();
-    console.log('[DEBUG] API contacts response:', data);
+    console.log('[DEBUG] API contacts response:', {
+      success: data.success,
+      count: data.data?.length || 0,
+      names: data.data?.map((u: any) => u.name).join(', ') || 'none'
+    });
 
     if (data.success) {
-      console.log('[DEBUG] Fetched', data.data.length, 'contacts from API');
+      console.log('[DEBUG] ✓ Successfully fetched', data.data.length, 'contacts from API');
       return data.data;
     } else {
-      console.error('[DEBUG] Failed to fetch contacts:', data.msg);
+      console.error('[DEBUG] API returned success=false:', data.msg);
       return [];
     }
-  } catch (error) {
-    console.error('[DEBUG] Error fetching contacts from API:', error);
+  } catch (error: any) {
+    console.error('[DEBUG] ✗ Error fetching contacts from API:', error.message || error);
     return [];
   }
 };

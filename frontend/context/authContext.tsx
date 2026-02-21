@@ -147,7 +147,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       try {
         console.log("[DEBUG] AuthContext: Waiting for socket connection...");
         await connectSocket();
-        console.log("[DEBUG] AuthContext: Socket connected, navigating to home");
+        console.log("[DEBUG] AuthContext: Socket connected successfully");
+        
+        // Prefetch contacts immediately after login
+        try {
+          const { fetchContactsFromAPI } = await import("@/services/contactsService");
+          console.log("[DEBUG] AuthContext: Prefetching contacts...");
+          const contacts = await fetchContactsFromAPI(response.token);
+          console.log("[DEBUG] AuthContext: Prefetched", contacts?.length || 0, "contacts");
+        } catch (error) {
+          console.error("[DEBUG] AuthContext: Failed to prefetch contacts:", error);
+        }
       } catch (error) {
         console.error("[DEBUG] AuthContext: Socket connection failed, but continuing:", error);
       }
@@ -173,7 +183,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       try {
         console.log("[DEBUG] AuthContext: Waiting for socket connection...");
         await connectSocket();
-        console.log("[DEBUG] AuthContext: Socket connected, navigating to home");
+        console.log("[DEBUG] AuthContext: Socket connected successfully");
+        
+        // Prefetch contacts immediately after signup
+        try {
+          const { fetchContactsFromAPI } = await import("@/services/contactsService");
+          console.log("[DEBUG] AuthContext: Prefetching contacts...");
+          const contacts = await fetchContactsFromAPI(response.token);
+          console.log("[DEBUG] AuthContext: Prefetched", contacts?.length || 0, "contacts");
+        } catch (error) {
+          console.error("[DEBUG] AuthContext: Failed to prefetch contacts:", error);
+        }
       } catch (error) {
         console.error("[DEBUG] AuthContext: Socket connection failed, but continuing:", error);
       }

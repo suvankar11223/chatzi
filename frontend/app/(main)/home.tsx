@@ -1,4 +1,4 @@
-import { StyleSheet, View, TouchableOpacity, FlatList, Alert } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, FlatList, Alert, RefreshControl } from 'react-native';
 import React, { useState, useEffect } from 'react';
 import ScreenWrapper from '@/components/ScreenWrapper';
 import { colors, spacingX, spacingY, radius } from '@/constants/theme';
@@ -22,6 +22,7 @@ const Home = () => {
   const [conversations, setConversations] = useState<ConversationProps[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
 
   // Monitor socket connection status
@@ -211,12 +212,15 @@ const Home = () => {
     console.log('[DEBUG] Home: Manual refresh triggered');
     setLoading(true);
     
+    // Always try API first (more reliable)
+    await loadContactsFromAPI();
+    
     const socket = getSocket();
     if (socket && socket.connected) {
-      console.log('[DEBUG] Home: Socket connected, fetching data');
+      console.log('[DEBUG] Home: Socket connected, fetching conversations');
       getConversations(null);
-      getContacts(null);
-      setTimeout(() => setLoading(false), 2000);
+      getContacts(null); // Also try socket as backup
+      setTimeout(() => setLoading(false), 1000);
     } else {
       console.log('[DEBUG] Home: Socket not connected, attempting to reconnect...');
       try {
@@ -225,15 +229,26 @@ const Home = () => {
         console.log('[DEBUG] Home: Reconnected successfully');
         getConversations(null);
         getContacts(null);
-        setTimeout(() => setLoading(false), 2000);
+        setTimeout(() => setLoading(false), 1000);
       } catch (error) {
         console.error('[DEBUG] Home: Reconnection failed:', error);
-        // Fallback: load contacts from API
-        console.log('[DEBUG] Home: Loading contacts from API fallback');
-        loadContactsFromAPI();
         setLoading(false);
       }
     }
+  };
+
+  const onRefresh = async () => {
+    console.log('[DEBUG] Home: Pull-to-refresh triggered');
+    setRefreshing(true);
+    await loadContactsFromAPI();
+    
+    const socket = getSocket();
+    if (socket && socket.connected) {
+      getConversations(null);
+      getContacts(null);
+    }
+    
+    setRefreshing(false);
   };
 
   // Refresh conversations when screen comes into focus
@@ -392,6 +407,14 @@ const Home = () => {
       <FlatList
         data={listData}
         keyExtractor={(item: any) => item._id}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
         renderItem={({ item, index }) => {
           if (selectedTab === 'direct') {
             // Check if there's an existing conversation with this user

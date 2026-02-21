@@ -172,12 +172,24 @@ export const getAllUsers = async (req: Request, res: Response) => {
 export const getContacts = async (req: Request, res: Response) => {
   try {
     const currentUserId = (req as any).user.userId;
-    console.log('[DEBUG] getContacts: Fetching contacts for user:', currentUserId);
+    const currentUserEmail = (req as any).user.email;
+    
+    console.log('='.repeat(60));
+    console.log('[DEBUG] getContacts API: Request received');
+    console.log('[DEBUG] Current user ID:', currentUserId);
+    console.log('[DEBUG] Current user email:', currentUserEmail);
     
     // Get all users except the current user
     const users = await User.find({ _id: { $ne: currentUserId } }).select('-password');
     
-    console.log('[DEBUG] getContacts: Found', users.length, 'contacts');
+    console.log('[DEBUG] getContacts API: Found', users.length, 'contacts (excluding current user)');
+    
+    if (users.length > 0) {
+      console.log('[DEBUG] Contact names:', users.map(u => u.name).join(', '));
+      console.log('[DEBUG] Contact emails:', users.map(u => u.email).join(', '));
+    } else {
+      console.log('[DEBUG] WARNING: No other users found in database!');
+    }
     
     const formattedUsers = users.map(user => ({
       _id: user._id,
@@ -186,12 +198,17 @@ export const getContacts = async (req: Request, res: Response) => {
       avatar: user.avatar,
     }));
 
+    console.log('[DEBUG] getContacts API: Returning', formattedUsers.length, 'contacts');
+    console.log('='.repeat(60));
+
     res.status(200).json({
       success: true,
       data: formattedUsers,
     });
   } catch (error: any) {
-    console.error('[ERROR] Get contacts:', error);
+    console.error('='.repeat(60));
+    console.error('[ERROR] Get contacts API:', error);
+    console.error('='.repeat(60));
     res.status(500).json({ success: false, msg: error.message });
   }
 };
