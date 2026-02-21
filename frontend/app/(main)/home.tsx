@@ -92,30 +92,46 @@ const Home = () => {
 
     newMessage(handleNewMessage);
 
-    // Emit requests - wait a bit to ensure socket is ready
-    const socket = getSocket();
-    if (socket && socket.connected) {
-      console.log('[DEBUG] Home: Socket already connected, emitting requests');
-      getConversations(null);
-      getContacts(null);
-    } else {
-      console.log('[DEBUG] Home: Socket not connected yet, waiting...');
-      // Also try to load from API as fallback
-      loadContactsFromAPI();
-      // Wait for connection
-      const checkConnection = setInterval(() => {
-        const s = getSocket();
-        if (s && s.connected) {
-          console.log('[DEBUG] Home: Socket connected, emitting requests');
-          clearInterval(checkConnection);
+    // Function to fetch data once socket is connected
+    const fetchDataWhenConnected = async () => {
+      let attempts = 0;
+      const maxAttempts = 20; // Try for 10 seconds (20 * 500ms)
+      
+      const checkAndFetch = async () => {
+        const socket = getSocket();
+        attempts++;
+        
+        console.log(`[DEBUG] Home: Checking socket connection (attempt ${attempts}/${maxAttempts})`);
+        
+        if (socket && socket.connected) {
+          console.log('[DEBUG] Home: Socket connected! Fetching data...');
+          
+          // Wait a bit to ensure socket is fully ready
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Emit requests
           getConversations(null);
           getContacts(null);
+          
+          setLoading(false);
+          return true;
+        } else if (attempts < maxAttempts) {
+          // Try again after 500ms
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return checkAndFetch();
+        } else {
+          console.log('[DEBUG] Home: Socket connection timeout, trying API fallback');
+          loadContactsFromAPI();
+          setLoading(false);
+          return false;
         }
-      }, 500);
+      };
       
-      // Stop checking after 10 seconds
-      setTimeout(() => clearInterval(checkConnection), 10000);
-    }
+      return checkAndFetch();
+    };
+
+    // Start checking for connection
+    fetchDataWhenConnected();
 
     return () => {
       console.log('[DEBUG] Home: Cleaning up socket listeners');
@@ -211,6 +227,9 @@ const Home = () => {
         setTimeout(() => setLoading(false), 2000);
       } catch (error) {
         console.error('[DEBUG] Home: Reconnection failed:', error);
+        // Fallback: load contacts from API
+        console.log('[DEBUG] Home: Loading contacts from API fallback');
+        loadContactsFromAPI();
         setLoading(false);
       }
     }

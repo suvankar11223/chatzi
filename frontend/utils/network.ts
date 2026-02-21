@@ -1,29 +1,32 @@
 import { Platform } from "react-native";
 
-// Static fallback IP - this will be used as primary
-// This solves the issue of IP detection being unreliable
-const FALLBACK_IP = "172.25.250.173";
+// Static IP - this is the IP of your computer on the network
+// Change this if your computer's IP changes
+const COMPUTER_IP = "172.25.250.173";
 
 /**
  * Get the server IP address.
- * For now, uses a static IP that works on your network.
- * In production, this could be a domain name.
+ * Returns the correct IP based on platform.
  */
 export const getLocalIP = async (): Promise<string> => {
   // For iOS simulator - use localhost
   if (Platform.OS === "ios") {
+    console.log("[DEBUG] Network: iOS simulator detected, using localhost");
     return "localhost";
   }
 
-  // For Android emulator - use special IP for host machine
+  // For Android - check if running in Expo Go (physical device)
+  // In Expo Go, we should use the computer's IP, not 10.0.2.2
+  // The 10.0.2.2 is only for Android emulator, not for Expo Go
   if (Platform.OS === "android") {
-    return "10.0.2.2";
+    // Use computer's IP for Expo Go on physical Android device
+    console.log("[DEBUG] Network: Android platform detected, using computer IP:", COMPUTER_IP);
+    return COMPUTER_IP;
   }
 
-  // For physical device (Expo Go) - use the known working IP
-  // This IP is hardcoded as a fallback since dynamic detection is complex
-  console.log("[DEBUG] Network: Using static IP for physical device:", FALLBACK_IP);
-  return FALLBACK_IP;
+  // For all other cases (including Expo Go on physical device), use computer IP
+  console.log("[DEBUG] Network: Using computer IP:", COMPUTER_IP);
+  return COMPUTER_IP;
 };
 
 /**
