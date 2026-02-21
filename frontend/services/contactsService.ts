@@ -1,0 +1,182 @@
+import * as Contacts from 'expo-contacts';
+import { Platform, Alert } from 'react-native';
+
+export interface PhoneContact {
+  id: string;
+  name: string;
+  phoneNumbers: string[];
+  emails: string[];
+}
+
+/**
+ * Request permission to access contacts
+ */
+export const requestContactsPermission = async (): Promise<boolean> => {
+  try {
+    const { status } = await Contacts.requestPermissionsAsync();
+    
+    if (status !== 'granted') {
+      Alert.alert(
+        'Permission Required',
+        'This app needs access to your contacts to find friends who use the app.',
+        [{ text: 'OK' }]
+      );
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('[DEBUG] Error requesting contacts permission:', error);
+    return false;
+  }
+};
+
+/**
+ * Fetch all contacts from the device
+ */
+export const getPhoneContacts = async (): Promise<PhoneContact[]> => {
+  try {
+    const hasPermission = await requestContactsPermission();
+    
+    if (!hasPermission) {
+      return [];
+    }
+
+    const { data } = await Contacts.getContactsAsync({
+      fields: [
+        Contacts.Fields.Name,
+        Contacts.Fields.PhoneNumbers,
+        Contacts.Fields.Emails,
+      ],
+    });
+
+    console.log(`[DEBUG] Fetched ${data.length} contacts from device`);
+
+    // Transform contacts to our format
+    const phoneContacts: PhoneContact[] = data
+      .filter(contact => contact.name) // Only contacts with names
+      .map(contact => ({
+        id: contact.id,
+        name: contact.name || 'Unknown',
+        phoneNumbers: contact.phoneNumbers?.map(p => p.number || '') || [],
+        emails: contact.emails?.map(e => e.email || '') || [],
+      }));
+
+    return phoneContacts;
+  } catch (error) {
+    console.error('[DEBUG] Error fetching contacts:', error);
+    Alert.alert('Error', 'Failed to fetch contacts');
+    return [];
+  }
+};
+
+/**
+ * Normalize phone number for comparison
+ * Removes spaces, dashes, parentheses, and country codes
+ */
+export const normalizePhoneNumber = (phone: string): string => {
+  // Remove all non-digit characters
+  let normalized = phone.replace(/\D/g, '');
+  
+  // Remove country code if present (assuming +1, +91, etc.)
+  if (normalized.length > 10) {
+    normalized = normalized.slice(-10); // Take last 10 digits
+  }
+  
+  return normalized;
+};
+
+/**
+ * Match phone contacts with registered app users
+ */
+export const matchContactsWithUsers = (
+  phoneContacts: PhoneContact[],
+  appUsers: any[]
+): any[] => {
+  const matchedUsers: any[] = [];
+
+  // Create a map of normalized phone numbers and emails from app users
+  const userPhoneMap = new Map<string, any>();
+  const userEmailMap = new Map<string, any>();
+
+  appUsers.forEach(user => {
+    // Map by email
+    if (user.email) {
+      userEmailMap.set(user.email.toLowerCase(), user);
+    }
+    
+    // Map by phone if available
+    if (user.phone) {
+      const normalizedPhone = normalizePhoneNumber(user.phone);
+      userPhoneMap.set(normalizedPhone, user);
+    }
+  });
+
+  // Match contacts with app users
+  phoneContacts.forEach(contact => {
+    // Try to match by phone number
+    for (const phoneNumber of contact.phoneNumbers) {
+      const normalizedPhone = normalizePhoneNumber(phoneNumber);
+      const matchedUser = userPhoneMap.get(normalizedPhone);
+      
+      if (matchedUser && !matchedUsers.find(u => u._id === matchedUser._id)) {
+        matchedUsers.push({
+          ...matchedUser,
+          contactName: contact.name, // Keep the name from contacts
+          isContact: true,
+        });
+        break;
+      }
+    }
+
+    // Try to match by email
+    for (const email of contact.emails) {
+      const matchedUser = userEmailMap.get(email.toLowerCase());
+      
+      if (matchedUser && !matchedUsers.find(u => u._id === matchedUser._id)) {
+        matchedUsers.push({
+          ...matchedUser,
+          contactName: contact.name,
+          isContact: true,
+        });
+        break;
+      }
+    }
+  });
+
+  console.log(`[DEBUG] Matched ${matchedUsers.length} contacts with app users`);
+  
+  return matchedUsers;
+};
+
+/**
+ * Fetch contacts (other users) from the backend via REST API
+ */
+export const fetchContactsFromAPI = async (token: string): Promise<any[]> => {
+  try {
+    const { API_URL } = await import("@/constants");
+    console.log('[DEBUG] Fetching contacts from API:', `${API_URL}/user/contacts`);
+    
+    const response = await fetch(`${API_URL}/user/contacts`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    const data = await response.json();
+    console.log('[DEBUG] API contacts response:', data);
+
+    if (data.success) {
+      console.log('[DEBUG] Fetched', data.data.length, 'contacts from API');
+      return data.data;
+    } else {
+      console.error('[DEBUG] Failed to fetch contacts:', data.msg);
+      return [];
+    }
+  } catch (error) {
+    console.error('[DEBUG] Error fetching contacts from API:', error);
+    return [];
+  }
+};
