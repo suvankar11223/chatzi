@@ -1,6 +1,5 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import Call from '../modals/Call.js';
-import { AccessToken } from 'livekit-server-sdk';
 
 export function registerCallEvents(io: SocketIOServer, socket: Socket) {
   const userId = (socket as any).userId;
@@ -12,29 +11,10 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
     conversationId: string;
     callerName: string;
     callerAvatar: string;
-    roomName: string;
-    wsUrl: string;
+    roomId: string;
   }) => {
     try {
-      const { receiverId, callType, conversationId, callerName, callerAvatar, roomName, wsUrl } = data;
-
-      // Generate LiveKit token for RECEIVER
-      const apiKey = process.env.LIVEKIT_API_KEY!;
-      const apiSecret = process.env.LIVEKIT_API_SECRET!;
-
-      const receiverToken = new AccessToken(apiKey, apiSecret, {
-        identity: `receiver-${receiverId}`,
-        ttl: '1h',
-      });
-
-      receiverToken.addGrant({
-        roomJoin: true,
-        room: roomName,
-        canPublish: true,
-        canSubscribe: true,
-      });
-
-      const receiverJwt = await receiverToken.toJwt();
+      const { receiverId, callType, conversationId, callerName, callerAvatar, roomId } = data;
 
       const call = await Call.create({
         callerId: userId,
@@ -42,7 +22,7 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
         conversationId,
         type: callType,
         status: 'missed',
-        agoraChannel: roomName,
+        agoraChannel: roomId,
       });
 
       // Find receiver socket
@@ -65,7 +45,7 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
       const receiver = await User.findById(receiverId);
       const receiverName = receiver?.name || 'You';
 
-      // Notify receiver with their own token
+      // Notify receiver
       receiverSockets.forEach((s) => {
         s.emit('incomingCall', {
           callId: call._id,
@@ -73,9 +53,7 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
           callerName,
           callerAvatar,
           callType,
-          roomName,
-          token: receiverJwt,
-          wsUrl,
+          roomId,
           conversationId,
           receiverName,
         });
@@ -85,7 +63,7 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
       socket.emit('callInitiated', {
         success: true,
         callId: call._id,
-        roomName,
+        roomId,
       });
 
       socket.emit('callResponse', { success: true });

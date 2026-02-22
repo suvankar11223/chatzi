@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Chatzi Call</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      background: #0f0f1a; 
+      width: 100vw; 
+      height: 100vh; 
+      overflow: hidden; 
+      font-family: sans-serif; 
+    }
+    #videos {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    #remoteVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #1a1a2e;
+    }
+    #localVideo {
+      position: absolute;
+      top: 20px;
+      right: 16px;
+      width: 110px;
+      height: 160px;
+      object-fit: cover;
+      border-radius: 12px;
+      border: 2px solid rgba(255,255,255,0.3);
+      background: #16213e;
+    }
+    #status {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: rgba(255,255,255,0.8);
+      font-size: 18px;
+      text-align: center;
+      pointer-events: none;
+    }
+    #controls {
+      position: absolute;
+      bottom: 40px;
+      left: 0; 
+      right: 0;
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      align-items: center;
+    }
+    .ctrl-btn {
+      width: 56px; 
+      height: 56px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      background: rgba(255,255,255,0.15);
+      color: white;
+    }
+    .ctrl-btn.active { background: rgba(255,255,255,0.3); }
+    .ctrl-btn.end { background: #EF4444; width: 68px; height: 68px; font-size: 26px; }
+  </style>
+</head>
+<body>
+  <div id="videos">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <video id="localVideo" autoplay playsinline muted></video>
+    <div id="status">Connecting...</div>
+  </div>
+  <div id="controls">
+    <button class="ctrl-btn" id="muteBtn" onclick="toggleMute()">🎤</button>
+    <button class="ctrl-btn end" onclick="endCall()">📵</button>
+    <button class="ctrl-btn" id="camBtn" onclick="toggleCamera()">📷</button>
+  </div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    // Get params from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomId = urlParams.get('roomId');
+    const userId = urlParams.get('userId');
+    const isCaller = urlParams.get('isCaller') === 'true';
+    const callType = urlParams.get('callType') || 'video';
+    const serverUrl = urlParams.get('serverUrl');
+    const token = urlParams.get('token');
+
+    let localStream = null;
+    let peerConnection = null;
+    let isMuted = false;
+    let isCamOff = false;
+    let socket = null;
+
+    const configuration = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ]
+    };
+
+    const statusEl = document.getElementById('status');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const localVideo = document.getElementById('localVideo');
+
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+      statusEl.style.display = msg ? 'block' : 'none';
+    }
+
+    async function init() {
+      try {
+        setStatus('Getting camera...');
+        
+        // Get media
+        const constraints = {
+          audio: true,
+          video: callType === 'video' ? { facingMode: 'user' } : false,
+        };
+        
+        localStream = await navigator.mediaDevices.getUserMedia(constraints);
+        localVideo.srcObject = localStream;
+        
+        if (callType === 'voice') {
+          localVideo.style.display = 'none';
+        }
+
+        setStatus('Connecting to server...');
+        
+        // Connect to your socket server with auth token
+        socket = io(serverUrl, {
+          auth: { token },
+          transports: ['polling', 'websocket'],
+        });
+
+        socket.on('connect', () => {
+          console.log('Socket connected');
+          setStatus('Waiting for other person...');
+          socket.emit('joinCallRoom', { roomId, userId });
+        });
+
+        socket.on('connect_error', (err) => {
+          setStatus('Connection error: ' + err.message);
+        });
+
+        // WebRTC signaling events
+        socket.on('callRoomReady', async () => {
+          console.log('Room ready, isCaller:', isCaller);
+          if (isCaller) {
+            await createOffer();
+          }
+        });
+
+        socket.on('webrtcOffer', async ({ offer }) => {
+          console.log('Received offer');
+          await createAnswer(offer);
+        });
+
+        socket.on('webrtcAnswer', async ({ answer }) => {
+          console.log('Received answer');
+          if (peerConnection) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+          }
+        });
+
+        socket.on('webrtcIce', async ({ candidate }) => {
+          console.log('Received ICE candidate');
+          if (peerConnection && candidate) {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+          }
+        });
+
+        socket.on('callEnded', () => {
+          setStatus('Call ended');
+          cleanup();
+          window.ReactNativeWebView?.postMessage(JSON.stringify({ type: 'callEnded' }));
+        });
+
+      } catch (err) {
+        console.error('Init error:', err);
+        setStatus('Error: ' + err.message);
+      }
+    }
+
+    function createPeerConnection() {
+      peerConnection = new RTCPeerConnection(configuration);
+
+      // Add local tracks
+      localStream.getTracks().forEach(track => {
+        peerConnection.addTrack(track, localStream);
+      });
+
+      // Receive remote stream
+      peerConnection.ontrack = (event) => {
+        console.log('Got remote track');
+        remoteVideo.srcObject = event.streams[0];
+        setStatus('');
+      };
+
+      // Send ICE candidates
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          socket.emit('webrtcIce', { roomId, candidate: event.candidate });
+        }
+      };
+
+      peerConnection.onconnectionstatechange = () => {
+        console.log('Connection state:', peerConnection.connectionState);
+        if (peerConnection.connectionState === 'connected') {
+          setStatus('');
+        } else if (peerConnection.connectionState === 'failed') {
+          setStatus('Connection failed. Please try again.');
+        }
+      };
+
+      return peerConnection;
+    }
+
+    async function createOffer() {
+      setStatus('Calling...');
+      createPeerConnection();
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      socket.emit('webrtcOffer', { roomId, offer });
+    }
+
+    async function createAnswer(offer) {
+      setStatus('Connecting...');
+      createPeerConnection();
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      socket.emit('webrtcAnswer', { roomId, answer });
+    }
+
+    function toggleMute() {
+      if (!localStream) return;
+      isMuted = !isMuted;
+      localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
+      document.getElementById('muteBtn').textContent = isMuted ? '🔇' : '🎤';
+      document.getElementById('muteBtn').classList.toggle('active', isMuted);
+    }
+
+    function toggleCamera() {
+      if (!localStream || callType !== 'video') return;
+      isCamOff = !isCamOff;
+      localStream.getVideoTracks().forEach(t => t.enabled = !isCamOff);
+      document.getElementById('camBtn').textContent = isCamOff ? '📵' : '📷';
+      document.getElementById('camBtn').classList.toggle('active', isCamOff);
+    }
+
+    function endCall() {
+      if (socket) socket.emit('endCallRoom', { roomId });
+      cleanup();
+      window.ReactNativeWebView?.postMessage(JSON.stringify({ type: 'endCall' }));
+    }
+
+    function cleanup() {
+      if (localStream) localStream.getTracks().forEach(t => t.stop());
+      if (peerConnection) peerConnection.close();
+      if (socket) socket.disconnect();
+    }
+
+    // Start
+    init();
+  </script>
+</body>
+</html>

@@ -5,6 +5,7 @@ import { Server } from 'http';
 import { registerUserEvents } from './userEvents.js';
 import { registerChatEvents } from './chatEvents.js';
 import { registerCallEvents } from './callEvents.js';
+import { registerWebRTCEvents } from './webrtcEvents.js';
 import Conversation from '../modals/Conversation';
 
 dotenv.config();
@@ -92,6 +93,7 @@ export const initializeSocket = (server: Server): SocketIOServer => {
     registerUserEvents(io, socket);
     registerChatEvents(io, socket);
     registerCallEvents(io, socket);
+    registerWebRTCEvents(io, socket);
 
     // Handle disconnection
     socket.on('disconnect', () => {
