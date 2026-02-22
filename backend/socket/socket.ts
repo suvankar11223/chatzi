@@ -15,11 +15,11 @@ const onlineUsers = new Map<string, string>(); // userId → socketId
 export const initializeSocket = (server: Server): SocketIOServer => {
   const io = new SocketIOServer(server, {
     cors: {
-      origin: "*", // Allow all origins for development
+      origin: "*",
       methods: ["GET", "POST"],
       credentials: true,
     },
-    transports: ['websocket', 'polling'], // WebSocket first for HTTPS
+    transports: ['polling', 'websocket'], // ✅ polling first for Render stability
     allowEIO3: true,
     pingTimeout: 60000,
     pingInterval: 25000,
@@ -30,23 +30,22 @@ export const initializeSocket = (server: Server): SocketIOServer => {
   // Authentication middleware
   io.use(async (socket: Socket, next) => {
     const token = socket.handshake.auth.token;
-    
+
     if (!token) {
-      console.log("[DEBUG] Socket: No token provided");
+      console.log("[Socket] No token provided");
       return next(new Error("Authentication error: no token provided"));
     }
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET as string);
-      
-      // Attach user info to socket
+
       (socket as any).userId = (decoded as any).userId;
       (socket as any).userEmail = (decoded as any).email;
-      
-      console.log("[DEBUG] Socket: User authenticated:", (decoded as any).email);
+
+      console.log("[Socket] User authenticated:", (decoded as any).email);
       next();
     } catch (err: any) {
-      console.log("[DEBUG] Socket: Token verification failed:", err.message);
+      console.log("[Socket] Token verification failed:", err.message);
       return next(new Error("Authentication error: invalid token"));
     }
   });
@@ -55,31 +54,26 @@ export const initializeSocket = (server: Server): SocketIOServer => {
   io.on('connection', async (socket: Socket) => {
     const userId = (socket as any).userId;
     const userEmail = (socket as any).userEmail;
-    
-    console.log(`[DEBUG] Socket: User connected - ${userEmail} (${socket.id})`);
+
+    console.log(`[Socket] User connected - ${userEmail} (${socket.id})`);
 
     // Mark user as ONLINE
     if (userId) {
       onlineUsers.set(userId, socket.id);
-      
-      // Broadcast to everyone that this user is online
       socket.broadcast.emit('userOnline', { userId });
-      
-      console.log(`[Online] User ${userId} is now ONLINE. Total online: ${onlineUsers.size}`);
+      console.log(`[Online] User ${userId} ONLINE. Total: ${onlineUsers.size}`);
     }
 
-    // Send the current online users list to the newly connected user
+    // Send current online users to newly connected user
     socket.emit('onlineUsers', {
       success: true,
       data: Array.from(onlineUsers.keys()),
     });
-    
-    console.log(`[Online] Sent online users list to ${userId}:`, Array.from(onlineUsers.keys()));
 
-    // Join user to their own personal room for direct messaging
+    // Join user to their own personal room
     socket.join(userId);
 
-    // CRITICAL FIX: Rejoin all conversation rooms on connection/reconnection
+    // Rejoin all conversation rooms on connection/reconnection
     try {
       const userConversations = await Conversation.find({
         participants: userId
@@ -87,34 +81,28 @@ export const initializeSocket = (server: Server): SocketIOServer => {
 
       userConversations.forEach((conv: any) => {
         socket.join(conv._id.toString());
-        console.log(`[DEBUG] Socket: User ${userId} rejoined conversation ${conv._id}`);
       });
-      
-      console.log(`[DEBUG] Socket: User ${userId} rejoined ${userConversations.length} conversation rooms`);
+
+      console.log(`[Socket] User ${userId} rejoined ${userConversations.length} conversations`);
     } catch (error) {
-      console.error("[DEBUG] Socket: Error rejoining conversations:", error);
+      console.error("[Socket] Error rejoining conversations:", error);
     }
 
-    // Register user-specific events
+    // Register all event handlers
     registerUserEvents(io, socket);
     registerChatEvents(io, socket);
     registerCallEvents(io, socket);
 
     // Handle disconnection
     socket.on('disconnect', () => {
-      console.log(`[DEBUG] Socket: User disconnected - ${userEmail} (${socket.id})`);
-      
-      // Mark user as OFFLINE
+      console.log(`[Socket] User disconnected - ${userEmail} (${socket.id})`);
+
       if (userId) {
         onlineUsers.delete(userId);
-        
-        // Broadcast to everyone that this user is offline
         socket.broadcast.emit('userOffline', { userId });
-        
-        console.log(`[Online] User ${userId} is now OFFLINE. Total online: ${onlineUsers.size}`);
+        console.log(`[Online] User ${userId} OFFLINE. Total: ${onlineUsers.size}`);
       }
-      
-      // Broadcast user offline status
+
       io.emit("userStatusChanged", {
         userId,
         status: "offline",
@@ -122,9 +110,8 @@ export const initializeSocket = (server: Server): SocketIOServer => {
       });
     });
 
-    // Handle explicit reconnection event from client
+    // Handle explicit reconnection request from client
     socket.on('rejoinConversations', async () => {
-      console.log(`[DEBUG] Socket: User ${userId} requesting to rejoin all conversations`);
       try {
         const userConversations = await Conversation.find({
           participants: userId
@@ -133,20 +120,20 @@ export const initializeSocket = (server: Server): SocketIOServer => {
         userConversations.forEach((conv: any) => {
           socket.join(conv._id.toString());
         });
-        
+
         socket.emit('rejoinedConversations', {
           success: true,
-          count: userConversations.length
+          count: userConversations.length,
         });
       } catch (error) {
         socket.emit('rejoinedConversations', {
           success: false,
-          msg: 'Failed to rejoin conversations'
+          msg: 'Failed to rejoin conversations',
         });
       }
     });
   });
 
-  console.log('[DEBUG] Socket.IO initialized successfully');
+  console.log('[Socket] Socket.IO initialized successfully');
   return io;
 };
