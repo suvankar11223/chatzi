@@ -26,9 +26,6 @@ import Input from "@/components/Input";
 import { uploadImageToCloudinary } from "@/services/imageService";
 import { getSocket } from "@/socket/socket";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import axios from "axios";
-import { getApiUrl } from "@/utils/network";
 
 interface MessageType {
   id: string;
@@ -41,6 +38,12 @@ interface MessageType {
   attachment?: string | null;
   createdAt: string;
   isMe: boolean;
+  isCallMessage?: boolean;
+  callData?: {
+    type: 'voice' | 'video';
+    duration?: number;
+    status?: 'completed' | 'missed' | 'declined';
+  };
 }
 
 const Conversation = () => {
@@ -88,7 +91,7 @@ const Conversation = () => {
   }, [isDirect, otherUserId, online, onlineUsers]);
 
   // ─── START CALL ───────────────────────────────────────────
-  const startCall = async (callType: 'voice' | 'video') => {
+  const startCall = (callType: 'voice' | 'video') => {
     console.log('[Call Debug] rawType:', type, 'isDirect:', isDirect, 'otherUserId:', otherUserId);
 
     if (!isDirect || !otherUserId) {
@@ -102,73 +105,42 @@ const Conversation = () => {
       return;
     }
 
-    try {
-      // Generate unique room name
-      const roomName = `chatzi-${conversationId}-${Date.now()}`;
-      console.log('[Call] Initiating', callType, 'call, room:', roomName);
+    // Generate unique room ID
+    const roomId = `chatzi-${conversationId}-${Date.now()}`;
+    console.log('[Call] Initiating', callType, 'call, room:', roomId);
 
-      // Get caller's LiveKit token
-      const token = await AsyncStorage.getItem('token');
-      const apiUrl = await getApiUrl();
-      const response = await axios.post(
-        `${apiUrl}/livekit/token`,
-        {
-          roomName,
-          participantName: `caller-${currentUser?.id}`,
+    socket.emit('initiateCall', {
+      receiverId: String(otherUserId),
+      callType,
+      conversationId: String(conversationId),
+      callerName: currentUser?.name || 'Unknown',
+      callerAvatar: currentUser?.avatar || '',
+      roomId,
+    });
+
+    socket.once('callInitiated', ({ callId }: any) => {
+      console.log('[Call] Navigating to callScreen');
+      
+      router.push({
+        pathname: '/callScreen',
+        params: {
+          callId: String(callId),
+          roomId: String(roomId),
+          callType: String(callType),
+          name: String(conversationName || 'User'),
+          avatar: String(conversationAvatar || ''),
+          otherUserId: String(otherUserId || ''),
+          conversationId: String(conversationId),
+          isCaller: 'true',
         },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
+      });
+    });
 
-      if (!response.data.success) {
-        Alert.alert('Error', 'Failed to generate call token');
-        return;
+    socket.once('callResponse', (res: any) => {
+      if (!res.success) {
+        Alert.alert('Call Failed', res.msg || 'Unable to initiate call');
       }
-
-      const { token: livekitToken, wsUrl } = response.data;
-
-      socket.emit('initiateCall', {
-        receiverId: String(otherUserId),
-        callType,
-        conversationId: String(conversationId),
-        callerName: currentUser?.name || 'Unknown',
-        callerAvatar: currentUser?.avatar || '',
-        roomName,
-        wsUrl,
-      });
-
-      socket.once('callInitiated', ({ callId }: any) => {
-        console.log('[Call] Navigating to callScreen, room:', roomName);
-        
-        setTimeout(() => {
-          router.replace({
-            pathname: '/callScreen',
-            params: {
-              callId: String(callId),
-              roomName: String(roomName),
-              token: String(livekitToken),
-              wsUrl: String(wsUrl),
-              callType: String(callType),
-              name: String(currentUser?.name || 'You'),
-              otherUserName: String(conversationName || 'User'),
-              avatar: String(conversationAvatar || ''),
-              otherUserId: String(otherUserId || ''),
-              isCaller: 'true',
-            },
-          });
-        }, 100);
-      });
-
-      socket.once('callResponse', (res: any) => {
-        if (!res.success) {
-          Alert.alert('Call Failed', res.msg || 'Unable to initiate call');
-        }
-      });
-    } catch (error: any) {
-      console.error('[Call] Error:', error);
-      Alert.alert('Error', 'Failed to initiate call');
-    }
+    });
   };
 
   // ─── PICK FILE ────────────────────────────────────────────
@@ -285,6 +257,8 @@ const Conversation = () => {
           attachment: data.data.attachment,
           createdAt: data.data.createdAt,
           isMe: data.data.sender.id === currentUser.id,
+          isCallMessage: data.data.isCallMessage,
+          callData: data.data.callData,
         };
 
         setMessages(prev => {
@@ -310,6 +284,30 @@ const Conversation = () => {
       setLoading(false);
     };
 
+    const onNewCallMessage = (data: any) => {
+      console.log('[Conversation] ✅ Received newCallMessage event:', data);
+      
+      if (data.success && data.data && data.data.conversationId === conversationId) {
+        console.log('[Conversation] Creating call message in UI');
+        
+        const msg = {
+          id: data.data.id,
+          sender: data.data.sender,
+          content: data.data.content,
+          attachment: data.data.attachment,
+          createdAt: data.data.createdAt,
+          isMe: data.data.sender.id === currentUser.id,
+          isCallMessage: data.data.isCallMessage,
+          callData: data.data.callData,
+        };
+
+        console.log('[Conversation] Call message:', msg);
+        setMessages(prev => [msg, ...prev]);
+      } else {
+        console.log('[Conversation] Call message not for this conversation');
+      }
+    };
+
     const onMarkAsRead = (data: any) => {
       if (data.success) {
         console.log('✓ Conversation marked as read');
@@ -318,6 +316,7 @@ const Conversation = () => {
 
     socket.on('getMessages', onGetMessages);
     socket.on('newMessage', onNewMessage);
+    socket.on('newCallMessage', onNewCallMessage);
     socket.on('markAsRead', onMarkAsRead);
 
     socket.emit('joinConversation', conversationId);
@@ -327,6 +326,7 @@ const Conversation = () => {
     return () => {
       socket.off('getMessages', onGetMessages);
       socket.off('newMessage', onNewMessage);
+      socket.off('newCallMessage', onNewCallMessage);
       socket.off('markAsRead', onMarkAsRead);
     };
   }, [conversationId, currentUser?.id]);

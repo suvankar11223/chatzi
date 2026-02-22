@@ -1,27 +1,39 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Alert } from 'react-native';
+import { View, StyleSheet, StatusBar, Alert } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getSocket } from '@/socket/socket';
-import { MaterialIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function CallScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  
   const callId = String(params.callId || '');
-  const roomName = String(params.roomName || '');
-  const token = String(params.token || '');
-  const wsUrl = String(params.wsUrl || '');
-  const callType = String(params.callType || 'video') as 'voice' | 'video';
-  const otherUserName = String(params.otherUserName || 'User');
+  const roomId = String(params.roomId || '');
+  const callType = String(params.callType || 'video');
+  const name = String(params.name || 'User');
   const otherUserId = String(params.otherUserId || '');
-  const [loading, setLoading] = useState(true);
+  const isCaller = params.isCaller === 'true';
+  
+  const [callUrl, setCallUrl] = useState<string | null>(null);
 
-  // LiveKit Meet hosted UI
-  const encodedToken = encodeURIComponent(token);
-  const encodedWsUrl = encodeURIComponent(wsUrl);
-  const videoEnabled = callType === 'video' ? 'true' : 'false';
-  const meetUrl = `https://meet.livekit.io/custom?liveKitUrl=${encodedWsUrl}&token=${encodedToken}&video=${videoEnabled}&audio=true`;
+  useEffect(() => {
+    buildCallUrl();
+  }, []);
+
+  const buildCallUrl = async () => {
+    const token = await AsyncStorage.getItem('token');
+    const serverUrl = 'https://chatzi-1m0m.onrender.com';
+    const userId = await AsyncStorage.getItem('userId');
+    const conversationId = String(params.conversationId || '');
+
+    // Build URL pointing to the HTML page served by your backend
+    const url = `${serverUrl}/call.html?roomId=${encodeURIComponent(roomId)}&userId=${encodeURIComponent(userId || '')}&isCaller=${isCaller}&callType=${callType}&serverUrl=${encodeURIComponent(serverUrl)}&token=${encodeURIComponent(token || '')}&name=${encodeURIComponent(name)}&conversationId=${encodeURIComponent(conversationId)}`;
+    
+    console.log('[CallScreen] Call URL built');
+    setCallUrl(url);
+  };
 
   useEffect(() => {
     const socket = getSocket();
@@ -29,71 +41,50 @@ export default function CallScreen() {
 
     const onCallEnded = (data: any) => {
       if (data.callId === callId) {
-        Alert.alert('Call Ended', `${otherUserName} ended the call`, [{ text: 'OK', onPress: () => router.back() }]);
-      }
-    };
-
-    const onCallDeclined = (data: any) => {
-      if (data.callId === callId) {
-        Alert.alert('Call Declined', `${otherUserName} declined the call`, [{ text: 'OK', onPress: () => router.back() }]);
+        Alert.alert('Call Ended', `${name} ended the call`, [
+          { text: 'OK', onPress: () => router.back() }
+        ]);
       }
     };
 
     socket.on('callEnded', onCallEnded);
-    socket.on('callDeclined', onCallDeclined);
-    return () => {
-      socket.off('callEnded', onCallEnded);
-      socket.off('callDeclined', onCallDeclined);
-    };
+    return () => { socket.off('callEnded', onCallEnded); };
   }, [callId]);
 
-  const handleEndCall = () => {
-    const socket = getSocket();
-    if (socket && callId) {
-      socket.emit('endCall', { callId, otherUserId });
-    }
-    router.back();
+  const handleMessage = (event: any) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === 'endCall' || data.type === 'callEnded') {
+        const socket = getSocket();
+        if (socket && callId) {
+          socket.emit('endCall', { callId, otherUserId });
+        }
+        router.back();
+      }
+    } catch (e) {}
   };
 
-  if (!token || !wsUrl) {
-    return (
-      <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>Failed to connect to call</Text>
-        <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 16 }}>
-          <Text style={{ color: '#6C63FF', fontSize: 16 }}>Go Back</Text>
-        </TouchableOpacity>
-      </View>
-    );
+  if (!callUrl) {
+    return <View style={styles.container} />;
   }
 
   return (
     <View style={styles.container}>
       <StatusBar hidden />
-      {loading && (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#6C63FF" />
-          <Text style={styles.loadingText}>Connecting to {otherUserName}...</Text>
-        </View>
-      )}
       <WebView
-        source={{ uri: meetUrl }}
+        source={{ uri: callUrl }}
         style={styles.webview}
         mediaPlaybackRequiresUserAction={false}
         allowsInlineMediaPlayback={true}
         javaScriptEnabled={true}
         domStorageEnabled={true}
         originWhitelist={['*']}
-        onLoadEnd={() => setLoading(false)}
+        onMessage={handleMessage}
         onError={() => {
-          Alert.alert('Error', 'Failed to connect. Please try again.');
+          Alert.alert('Error', 'Call failed. Please try again.');
           router.back();
         }}
       />
-      <View style={styles.endCallContainer}>
-        <TouchableOpacity style={styles.endCallBtn} onPress={handleEndCall}>
-          <MaterialIcons name="call-end" size={32} color="#fff" />
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -101,10 +92,4 @@ export default function CallScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0f0f1a' },
   webview: { flex: 1 },
-  loadingOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#0f0f1a', justifyContent: 'center', alignItems: 'center', zIndex: 10, gap: 16 },
-  loadingText: { color: '#fff', fontSize: 16 },
-  endCallContainer: { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center', zIndex: 20 },
-  endCallBtn: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#EF4444', justifyContent: 'center', alignItems: 'center', elevation: 8 },
-  errorContainer: { flex: 1, backgroundColor: '#0f0f1a', justifyContent: 'center', alignItems: 'center' },
-  errorText: { color: '#fff', fontSize: 18 },
 });

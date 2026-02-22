@@ -146,6 +146,12 @@ export type MessageProps = {
   attachment?: string | null;
   isMe?: boolean;
   createdAt: string;
+  isCallMessage?: boolean;
+  callData?: {
+    type: 'voice' | 'video';
+    duration?: number;
+    status?: 'completed' | 'missed' | 'declined';
+  };
 };
 
 // Call types

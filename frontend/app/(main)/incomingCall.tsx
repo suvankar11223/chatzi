@@ -1,8 +1,5 @@
 import React, { useEffect } from 'react';
-import {
-  View, Text, TouchableOpacity,
-  StyleSheet, Vibration
-} from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Vibration } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getSocket } from '@/socket/socket';
 import Avatar from '@/components/Avatar';
@@ -17,9 +14,7 @@ export default function IncomingCallScreen() {
   const callerName = String(params.callerName || 'Unknown');
   const callerAvatar = String(params.callerAvatar || '');
   const callType = String(params.callType || 'video') as 'voice' | 'video';
-  const roomName = String(params.roomName || '');
-  const token = String(params.token || '');
-  const wsUrl = String(params.wsUrl || '');
+  const roomId = String(params.roomId || '');
 
   useEffect(() => {
     Vibration.vibrate([500, 500, 500], true);
@@ -34,14 +29,12 @@ export default function IncomingCallScreen() {
       pathname: '/callScreen',
       params: {
         callId,
-        roomName,
-        token,
-        wsUrl,
+        roomId,
         callType,
-        name: String(params.receiverName || 'You'),
-        otherUserName: callerName,
+        name: callerName,
         avatar: callerAvatar,
         otherUserId: callerId,
+        conversationId: String(params.conversationId || ''),
         isCaller: 'false',
       },
     });
@@ -87,10 +80,10 @@ export default function IncomingCallScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flex: 1, 
     backgroundColor: '#0f0f1a',
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: 'center', 
+    alignItems: 'center', 
     gap: 20,
   },
   callType: { fontSize: 16, color: 'rgba(255,255,255,0.6)', marginBottom: 10 },
