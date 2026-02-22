@@ -39,11 +39,14 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
   // End call room
   socket.on('endCallRoom', async ({ roomId, callData }) => {
     console.log(`[WebRTC] Ending room ${roomId}`);
+    console.log(`[WebRTC] Call data received:`, callData);
     
     // Create call message if call data provided
     if (callData && callData.conversationId && callData.callerId) {
       try {
         const { conversationId, callerId, duration, callType, status } = callData;
+        
+        console.log(`[WebRTC] Creating call message for conversation ${conversationId}`);
         
         // Create call message
         const callMessage = await Message.create({
@@ -58,9 +61,13 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
           },
         });
 
+        console.log(`[WebRTC] Call message created:`, callMessage._id);
+
         // Populate sender info
         const populatedMessage = await Message.findById(callMessage._id)
           .populate('senderId', 'name avatar');
+
+        console.log(`[WebRTC] Populated message:`, populatedMessage);
 
         // Update conversation's last message
         await Conversation.findByIdAndUpdate(conversationId, {
@@ -68,7 +75,7 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
         });
 
         // Emit to all users in conversation
-        io.to(roomId).emit('newCallMessage', {
+        const messageData = {
           success: true,
           data: {
             id: populatedMessage._id,
@@ -83,12 +90,17 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
             callData: populatedMessage.callData,
             createdAt: populatedMessage.createdAt,
           },
-        });
+        };
 
-        console.log('[WebRTC] Call message created:', callMessage._id);
+        console.log(`[WebRTC] Emitting newCallMessage to conversation room ${conversationId}:`, messageData);
+        io.to(conversationId).emit('newCallMessage', messageData);
+
+        console.log('[WebRTC] ✅ Call message sent successfully');
       } catch (err) {
-        console.error('[WebRTC] Error creating call message:', err);
+        console.error('[WebRTC] ❌ Error creating call message:', err);
       }
+    } else {
+      console.log('[WebRTC] No call data provided, skipping message creation');
     }
     
     io.to(roomId).emit('callEnded');
