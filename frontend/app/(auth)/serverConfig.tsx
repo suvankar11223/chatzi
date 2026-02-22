@@ -26,8 +26,8 @@ const ServerConfig = () => {
         // Default to the current IP
         setServerIP('172.25.250.173');
       }
-    } catch (error) {
-      console.error('Error loading saved IP:', error);
+    } catch {
+      console.error('Error loading saved IP');
     }
   };
 
@@ -40,7 +40,7 @@ const ServerConfig = () => {
         },
       });
       return response.ok;
-    } catch (error) {
+    } catch {
       return false;
     }
   };
@@ -104,22 +104,22 @@ const ServerConfig = () => {
             Server Configuration
           </Typo>
           <Typo size={16} color={colors.neutral300} style={styles.subtitle}>
-            Enter your computer's IP address to connect
+            Enter your computer&apos;s IP address to connect
           </Typo>
 
           <View style={styles.form}>
             <View style={styles.instructionsBox}>
               <Typo size={14} fontWeight="600" color={colors.neutral700} style={styles.instructionTitle}>
-                How to find your computer's IP:
+                How to find your computer&apos;s IP:
               </Typo>
               <Typo size={13} color={colors.neutral600} style={styles.instruction}>
-                • Windows: Open CMD and type "ipconfig"
+                • Windows: Open CMD and type &quot;ipconfig&quot;
               </Typo>
               <Typo size={13} color={colors.neutral600} style={styles.instruction}>
                 • Mac: System Preferences → Network
               </Typo>
               <Typo size={13} color={colors.neutral600} style={styles.instruction}>
-                • Look for "IPv4 Address" (e.g., 192.168.1.100)
+                • Look for &quot;IPv4 Address&quot; (e.g., 192.168.1.100)
               </Typo>
             </View>
 
@@ -133,16 +133,22 @@ const ServerConfig = () => {
             />
 
             <Button
-              title={loading ? 'Testing Connection...' : 'Save & Test Connection'}
               onPress={handleSave}
               loading={loading}
-            />
+            >
+              <Typo size={16} fontWeight="600" color={colors.neutral900}>
+                {loading ? 'Testing Connection...' : 'Save & Test Connection'}
+              </Typo>
+            </Button>
 
             <Button
-              title="Skip for Now"
               onPress={handleSkip}
-              variant="outline"
-            />
+              style={styles.outlineButton}
+            >
+              <Typo size={16} fontWeight="600" color={colors.primary}>
+                Skip for Now
+              </Typo>
+            </Button>
           </View>
         </View>
       </View>
@@ -172,14 +178,19 @@ const styles = StyleSheet.create({
   },
   instructionsBox: {
     backgroundColor: colors.neutral100,
-    padding: spacingX._16,
+    padding: spacingX._15,
     borderRadius: radius._12,
     marginBottom: spacingY._10,
   },
   instructionTitle: {
-    marginBottom: spacingY._8,
+    marginBottom: spacingY._7,
   },
   instruction: {
-    marginBottom: spacingY._4,
+    marginBottom: spacingY._5,
+  },
+  outlineButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: colors.primary,
   },
 });

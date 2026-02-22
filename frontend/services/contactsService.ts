@@ -1,5 +1,12 @@
 import * as Contacts from 'expo-contacts';
 import { Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  getCachedContacts,
+  cacheContacts,
+  getCachedConversations,
+  cacheConversations,
+} from '@/utils/network';
 
 export interface PhoneContact {
   id: string;
@@ -7,6 +14,10 @@ export interface PhoneContact {
   phoneNumbers: string[];
   emails: string[];
 }
+
+// Track if we're currently loading data
+let isLoadingContacts = false;
+let isLoadingConversations = false;
 
 /**
  * Request permission to access contacts
@@ -26,7 +37,6 @@ export const requestContactsPermission = async (): Promise<boolean> => {
     
     return true;
   } catch (error) {
-    console.error('[DEBUG] Error requesting contacts permission:', error);
     return false;
   }
 };
@@ -50,11 +60,8 @@ export const getPhoneContacts = async (): Promise<PhoneContact[]> => {
       ],
     });
 
-    console.log(`[DEBUG] Fetched ${data.length} contacts from device`);
-
-    // Transform contacts to our format
     const phoneContacts: PhoneContact[] = data
-      .filter(contact => contact.name) // Only contacts with names
+      .filter(contact => contact.name)
       .map(contact => ({
         id: contact.id,
         name: contact.name || 'Unknown',
@@ -63,8 +70,7 @@ export const getPhoneContacts = async (): Promise<PhoneContact[]> => {
       }));
 
     return phoneContacts;
-  } catch (error) {
-    console.error('[DEBUG] Error fetching contacts:', error);
+  } catch {
     Alert.alert('Error', 'Failed to fetch contacts');
     return [];
   }
@@ -72,17 +78,12 @@ export const getPhoneContacts = async (): Promise<PhoneContact[]> => {
 
 /**
  * Normalize phone number for comparison
- * Removes spaces, dashes, parentheses, and country codes
  */
 export const normalizePhoneNumber = (phone: string): string => {
-  // Remove all non-digit characters
   let normalized = phone.replace(/\D/g, '');
-  
-  // Remove country code if present (assuming +1, +91, etc.)
   if (normalized.length > 10) {
-    normalized = normalized.slice(-10); // Take last 10 digits
+    normalized = normalized.slice(-10);
   }
-  
   return normalized;
 };
 
@@ -94,27 +95,20 @@ export const matchContactsWithUsers = (
   appUsers: any[]
 ): any[] => {
   const matchedUsers: any[] = [];
-
-  // Create a map of normalized phone numbers and emails from app users
   const userPhoneMap = new Map<string, any>();
   const userEmailMap = new Map<string, any>();
 
   appUsers.forEach(user => {
-    // Map by email
     if (user.email) {
       userEmailMap.set(user.email.toLowerCase(), user);
     }
-    
-    // Map by phone if available
     if (user.phone) {
       const normalizedPhone = normalizePhoneNumber(user.phone);
       userPhoneMap.set(normalizedPhone, user);
     }
   });
 
-  // Match contacts with app users
   phoneContacts.forEach(contact => {
-    // Try to match by phone number
     for (const phoneNumber of contact.phoneNumbers) {
       const normalizedPhone = normalizePhoneNumber(phoneNumber);
       const matchedUser = userPhoneMap.get(normalizedPhone);
@@ -122,14 +116,13 @@ export const matchContactsWithUsers = (
       if (matchedUser && !matchedUsers.find(u => u._id === matchedUser._id)) {
         matchedUsers.push({
           ...matchedUser,
-          contactName: contact.name, // Keep the name from contacts
+          contactName: contact.name,
           isContact: true,
         });
         break;
       }
     }
 
-    // Try to match by email
     for (const email of contact.emails) {
       const matchedUser = userEmailMap.get(email.toLowerCase());
       
@@ -143,30 +136,122 @@ export const matchContactsWithUsers = (
       }
     }
   });
-
-  console.log(`[DEBUG] Matched ${matchedUsers.length} contacts with app users`);
   
   return matchedUsers;
 };
 
 /**
- * Fetch contacts (other users) from the backend via REST API
- * Includes retry logic with exponential backoff
+ * Fetch contacts from the backend - tries API first, falls back to cache
  */
-export const fetchContactsFromAPI = async (token: string, retries = 3): Promise<any[]> => {
-  for (let attempt = 1; attempt <= retries; attempt++) {
+export const fetchContactsFromAPI = async (token: string, retries = 1): Promise<any[]> => {
+  if (isLoadingContacts) {
+    console.log('[ContactsService] Already loading contacts, returning cached');
+    const cached = await getCachedContacts();
+    return cached || [];
+  }
+
+  isLoadingContacts = true;
+
+  try {
+    // First get any cached data
+    const cached = await getCachedContacts();
+    console.log('[ContactsService] Cached contacts:', cached?.length || 0);
+    
+    // Try fetching from API with retries
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const { getApiUrl } = await import("@/constants");
+        const API_URL = await getApiUrl();
+        const url = `${API_URL}/user/contacts`;
+        console.log('[ContactsService] Fetching from:', url, 'Attempt:', attempt);
+        console.log('[ContactsService] Token exists:', !!token, 'Token prefix:', token?.substring(0, 20));
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000); // Faster timeout
+        
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+        
+        console.log('[ContactsService] Response status:', response.status, response.statusText);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        console.log('[ContactsService] API response success:', data.success);
+
+        if (data.success && data.data) {
+          // Cache the results
+          await cacheContacts(data.data);
+          isLoadingContacts = false;
+          console.log('[ContactsService] Cached', data.data.length, 'contacts');
+          return data.data;
+        }
+        
+        // API returned empty or error - use cached
+        console.log('[ContactsService] API returned no data, using cached');
+        isLoadingContacts = false;
+        return cached || data.data || [];
+      } catch (error: any) {
+        console.log('[ContactsService] Attempt', attempt, 'failed:', error.message);
+        if (attempt === retries) {
+          isLoadingContacts = false;
+          // Return cached if available
+          console.log('[ContactsService] All attempts failed, returning cached');
+          return cached || [];
+        }
+        
+        const waitTime = Math.pow(2, attempt - 1) * 500; // Faster retries
+        console.log('[ContactsService] Retrying in', waitTime, 'ms');
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
+    
+    isLoadingContacts = false;
+    return cached || [];
+  } catch (error: any) {
+    console.error('[ContactsService] Fatal error:', error);
+    isLoadingContacts = false;
+    const cached = await getCachedContacts();
+    return cached || [];
+  }
+};
+
+/**
+ * Fetch all conversations from the backend
+ */
+export const fetchConversationsFromAPI = async (token: string): Promise<any[]> => {
+  if (isLoadingConversations) {
+    console.log('[ContactsService] Already loading conversations, returning cached');
+    const cached = await getCachedConversations();
+    return cached || [];
+  }
+
+  isLoadingConversations = true;
+
+  try {
+    // First get any cached data
+    const cached = await getCachedConversations();
+    console.log('[ContactsService] Cached conversations:', cached?.length || 0);
+
     try {
       const { getApiUrl } = await import("@/constants");
       const API_URL = await getApiUrl();
-      const url = `${API_URL}/user/contacts`;
-      
-      console.log(`[DEBUG] Fetching contacts from API (attempt ${attempt}/${retries}):`, url);
-      console.log('[DEBUG] Using token:', token ? `${token.substring(0, 20)}...` : 'NO TOKEN');
+      console.log('[ContactsService] Fetching conversations from:', API_URL);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // Faster timeout
       
-      const response = await fetch(url, {
+      const response = await fetch(`${API_URL}/user/conversations`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -176,44 +261,45 @@ export const fetchContactsFromAPI = async (token: string, retries = 3): Promise<
       });
 
       clearTimeout(timeoutId);
-      
-      console.log('[DEBUG] API response status:', response.status);
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[DEBUG] API error response:', errorText);
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
+      console.log('[ContactsService] Conversations API response:', response.status);
 
       const data = await response.json();
-      console.log('[DEBUG] API contacts response:', {
-        success: data.success,
-        count: data.data?.length || 0,
-        names: data.data?.map((u: any) => u.name).join(', ') || 'none'
-      });
 
-      if (data.success) {
-        console.log('[DEBUG] ✓ Successfully fetched', data.data.length, 'contacts from API');
+      if (data.success && data.data) {
+        await cacheConversations(data.data);
+        isLoadingConversations = false;
+        console.log('[ContactsService] Cached', data.data.length, 'conversations');
         return data.data;
-      } else {
-        console.error('[DEBUG] API returned success=false:', data.msg);
-        return [];
       }
+      
+      console.log('[ContactsService] API returned no conversations, using cached');
+      isLoadingConversations = false;
+      return cached || [];
     } catch (error: any) {
-      console.error(`[DEBUG] ✗ Error fetching contacts (attempt ${attempt}/${retries}):`, error.message || error);
-      
-      // If this is the last attempt, return empty array
-      if (attempt === retries) {
-        console.error('[DEBUG] All retry attempts failed');
-        return [];
-      }
-      
-      // Wait before retrying (exponential backoff: 1s, 2s, 4s)
-      const waitTime = Math.pow(2, attempt - 1) * 1000;
-      console.log(`[DEBUG] Waiting ${waitTime}ms before retry...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
+      console.log('[ContactsService] Error fetching conversations:', error.message);
+      isLoadingConversations = false;
+      return cached || [];
     }
+  } catch (error: any) {
+    console.error('[ContactsService] Fatal error:', error);
+    isLoadingConversations = false;
+    const cached = await getCachedConversations();
+    return cached || [];
   }
-  
-  return [];
+};
+
+/**
+ * Force refresh contacts
+ */
+export const forceRefreshContacts = async (token: string): Promise<any[]> => {
+  isLoadingContacts = false;
+  return fetchContactsFromAPI(token, 3);
+};
+
+/**
+ * Force refresh conversations
+ */
+export const forceRefreshConversations = async (token: string): Promise<any[]> => {
+  isLoadingConversations = false;
+  return fetchConversationsFromAPI(token);
 };

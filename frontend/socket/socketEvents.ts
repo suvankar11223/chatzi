@@ -63,41 +63,25 @@ export const offConversationLeft = (callback?: (data: { conversationId: string }
 // Test socket event
 export const testSocket = (payload: any = { test: 'data' }, callback?: (response: any) => void) => {
   const socket = getSocket();
-  
-  if (!socket) {
-    console.log("[DEBUG] socketEvents: Socket is not connected");
-    return;
-  }
-
-  if (callback) {
-    // Listen for response
-    socket.once('testSocket', callback);
-  }
-
-  // Emit test event
+  if (!socket) return;
+  if (callback) socket.once('testSocket', callback);
   emitEvent('testSocket', payload);
 };
 
 // Update profile via socket
 export const updateProfile = (payload: any, off: boolean = false) => {
   const socket = getSocket();
-  
-  if (!socket) {
-    console.log("Socket is not connected");
-    return;
-  }
-
+  if (!socket) return;
   if (off) {
-    // turn off listening to this event
-    socket.off("updateProfile", payload); // payload is the callback
+    socket.off("updateProfile", payload);
   } else if (typeof payload === "function") {
-    socket.on("updateProfile", payload); // payload as callback for this event
+    socket.on("updateProfile", payload);
   } else {
-    socket.emit("updateProfile", payload); // sending payload as data
+    socket.emit("updateProfile", payload);
   }
 };
 
-// Listen for user profile updates from other users
+// Listen for user profile updates
 export const onUserProfileUpdated = (callback: (data: { userId: string; name: string; avatar: string }) => void) => {
   onEvent('userProfileUpdated', callback);
 };
@@ -143,132 +127,90 @@ export const cleanupSocketListeners = (handlers: {
 // Get contacts
 export const getContacts = (payload: any, off: boolean = false) => {
   const socket = getSocket();
-  
-  if (!socket) {
-    console.log("Socket is not connected");
-    return;
-  }
-
+  if (!socket) return;
   if (off) {
-    // turn off listening to this event
-    socket.off("getContacts", payload); // payload is the callback
+    socket.off("getContacts", payload);
   } else if (typeof payload === "function") {
-    socket.on("getContacts", payload); // payload as callback for this event
+    socket.on("getContacts", payload);
   } else {
-    socket.emit("getContacts", payload); // sending payload as data
+    socket.emit("getContacts", payload);
   }
 };
 
 // Get conversations
 export const getConversations = (payload: any, off: boolean = false) => {
   const socket = getSocket();
-  
-  if (!socket) {
-    console.log("Socket is not connected");
-    return;
-  }
-
+  if (!socket) return;
   if (off) {
-    // turn off listening to this event
-    socket.off("getConversations", payload); // payload is the callback
+    socket.off("getConversations", payload);
   } else if (typeof payload === "function") {
-    socket.on("getConversations", payload); // payload as callback for this event
+    socket.on("getConversations", payload);
   } else {
-    socket.emit("getConversations", payload); // sending payload as data
+    socket.emit("getConversations", payload);
   }
 };
 
 // Create new conversation
 export const createConversation = (payload: any, off: boolean = false) => {
   const socket = getSocket();
-  
-  if (!socket) {
-    console.log("Socket is not connected");
-    return;
-  }
-
+  if (!socket) return;
   if (off) {
-    // turn off listening to this event
-    socket.off("newConversation", payload); // payload is the callback
+    socket.off("newConversation", payload);
   } else if (typeof payload === "function") {
-    socket.on("newConversation", payload); // payload as callback for this event
+    socket.on("newConversation", payload);
   } else {
-    socket.emit("newConversation", payload); // sending payload as data
+    socket.emit("newConversation", payload);
   }
 };
 
-// Listen for new conversations (when someone adds you to a conversation)
+// Listen for new conversations
 export const newConversation = (payload: any, off: boolean = false) => {
   const socket = getSocket();
-  
-  if (!socket) {
-    console.log("Socket is not connected");
-    return;
-  }
-
+  if (!socket) return;
   if (off) {
-    // turn off listing to this event
-    socket.off("newConversation", payload); // payload is the callback
+    socket.off("newConversation", payload);
   } else if (typeof payload === "function") {
-    socket.on("newConversation", payload); // payload as callback for this event
+    socket.on("newConversation", payload);
   } else {
-    socket.emit("newConversation", payload); // sending payload as data
+    socket.emit("newConversation", payload);
   }
 };
 
 // Send new message
 export const newMessage = (payload: any, off: boolean = false) => {
   const socket = getSocket();
-  
-  if (!socket) {
-    console.log("Socket is not connected");
-    return;
-  }
-
+  if (!socket) return;
   if (off) {
-    // turn off listening to this event
-    socket.off("newMessage", payload); // payload is the callback
+    socket.off("newMessage", payload);
   } else if (typeof payload === "function") {
-    socket.on("newMessage", payload); // payload as callback for this event
+    socket.on("newMessage", payload);
   } else {
-    socket.emit("newMessage", payload); // sending payload as data
+    socket.emit("newMessage", payload);
   }
 };
 
 // Get messages for a conversation
 export const getMessages = (payload: any, off: boolean = false) => {
   const socket = getSocket();
-  
-  if (!socket) {
-    console.log("Socket is not connected");
-    return;
-  }
-
+  if (!socket) return;
   if (off) {
-    // turn off listening to this event
-    socket.off("getMessages", payload); // payload is the callback
+    socket.off("getMessages", payload);
   } else if (typeof payload === "function") {
-    socket.on("getMessages", payload); // payload as callback for this event
+    socket.on("getMessages", payload);
   } else {
-    socket.emit("getMessages", payload); // sending payload as data
+    socket.emit("getMessages", payload);
   }
 };
 
 // Join a conversation room
 export const joinConversation = (payload: any, off: boolean = false) => {
   const socket = getSocket();
-  
-  if (!socket) {
-    console.log("Socket is not connected");
-    return;
-  }
-
+  if (!socket) return;
   if (off) {
-    // turn off listening to this event
-    socket.off("conversationJoined", payload); // payload is the callback
+    socket.off("conversationJoined", payload);
   } else if (typeof payload === "function") {
-    socket.on("conversationJoined", payload); // payload as callback for this event
+    socket.on("conversationJoined", payload);
   } else {
-    socket.emit("joinConversation", payload); // sending payload as data
+    socket.emit("joinConversation", payload);
   }
 };

@@ -130,6 +130,7 @@ export type ConversationProps = {
     attachment?: string;
     createdAt: string;
   };
+  unreadCount?: number;
   createdAt: string;
   updatedAt: string;
 };

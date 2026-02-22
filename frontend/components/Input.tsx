@@ -1,4 +1,4 @@
-﻿import { StyleSheet, TextInput, View } from 'react-native'
+import { StyleSheet, TextInput, View } from 'react-native'
 import React from 'react'
 import { InputProps } from '@/types'
 import { colors, radius, spacingX, spacingY } from '@/constants/theme'

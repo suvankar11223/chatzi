@@ -36,57 +36,44 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     loadToken();
   }, []);
 
-  // Handle navigation based on auth state (but not initial load)
+  // Handle navigation based on auth state
   useEffect(() => {
     if (!isInitialized) return;
 
     const inAuthGroup = segments[0] === '(auth)';
     const inMainGroup = segments[0] === '(main)';
 
-    // Only redirect if we're actually in a group (not at root)
     if (!inAuthGroup && !inMainGroup) return;
 
     if (!token && !inAuthGroup) {
-      // User is not signed in and not in auth screens, redirect to welcome
       router.replace('/(auth)/welcome');
     } else if (token && inAuthGroup) {
-      // User is signed in but still in auth screens, redirect to home
       router.replace('/(main)/home');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, segments, isInitialized]);
 
   const loadToken = async () => {
     try {
-      console.log("[DEBUG] AuthContext: Loading stored token...");
       const storedToken = await AsyncStorage.getItem("token");
       
       if (storedToken) {
-        console.log("[DEBUG] AuthContext: Token found in storage");
         const decoded = jwtDecode<DecodedTokenProps>(storedToken);
         
-        // Check if token is expired
         const currentTime = Date.now() / 1000;
         if (decoded.exp && decoded.exp < currentTime) {
-          console.log("[DEBUG] AuthContext: Token has expired");
           await AsyncStorage.removeItem("token");
           setIsInitialized(true);
           return;
         }
 
-        // Token is valid, restore user session
-        console.log("[DEBUG] AuthContext: Token is valid, restoring session");
         setToken(storedToken);
         
-        // Try to get stored user data with avatar
         const storedUserData = await AsyncStorage.getItem("userData");
         let userObj: UserProps;
         
         if (storedUserData) {
-          console.log("[DEBUG] AuthContext: Found stored user data");
           userObj = JSON.parse(storedUserData);
         } else {
-          // Fallback to token data
           userObj = {
             id: decoded.userId,
             email: decoded.email,
@@ -95,21 +82,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
         
         setUser(userObj);
-        console.log("[DEBUG] AuthContext: User restored:", userObj);
         
-        // Connect socket immediately after restoring session
-        try {
-          console.log("[DEBUG] AuthContext: Connecting socket after token restore...");
-          await connectSocket();
-          console.log("[DEBUG] AuthContext: Socket connected successfully");
-        } catch (error) {
-          console.error("[DEBUG] AuthContext: Socket connection failed:", error);
-        }
-      } else {
-        console.log("[DEBUG] AuthContext: No token found in storage");
+        // Try to connect socket (don't block)
+        connectSocket().catch(() => {});
       }
-    } catch (error) {
-      console.log("[DEBUG] AuthContext: Failed to decode token:", error);
+    } catch {
       await AsyncStorage.removeItem("token");
     } finally {
       setIsInitialized(true);
@@ -121,9 +98,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setToken(token);
       await AsyncStorage.setItem("token", token);
       const decoded = jwtDecode<DecodedTokenProps>(token);
-      console.log("[DEBUG] AuthContext: Decoded token:", decoded);
       
-      // Map decoded token to user object
       const userObj: UserProps = {
         id: decoded.userId,
         email: decoded.email,
@@ -132,37 +107,42 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       
       setUser(userObj);
       await AsyncStorage.setItem("userData", JSON.stringify(userObj));
-      console.log("[DEBUG] AuthContext: User set:", userObj);
     }
   };
 
   const signIn = async (email: string, password: string) => {
-    console.log("[DEBUG] AuthContext: signIn called", { email });
     const response = await authService.login(email, password);
-    console.log("[DEBUG] AuthContext: Login response", response);
     if (response.token) {
       await updateToken(response.token);
       
-      // Wait for socket to connect before navigating
-      try {
-        console.log("[DEBUG] AuthContext: Waiting for socket connection...");
-        await connectSocket();
-        console.log("[DEBUG] AuthContext: Socket connected successfully");
-        
-        // Prefetch contacts immediately after login
-        try {
-          const { fetchContactsFromAPI } = await import("@/services/contactsService");
-          console.log("[DEBUG] AuthContext: Prefetching contacts...");
-          const contacts = await fetchContactsFromAPI(response.token);
-          console.log("[DEBUG] AuthContext: Prefetched", contacts?.length || 0, "contacts");
-        } catch (error) {
-          console.error("[DEBUG] AuthContext: Failed to prefetch contacts:", error);
-        }
-      } catch (error) {
-        console.error("[DEBUG] AuthContext: Socket connection failed, but continuing:", error);
-      }
+      // Try to connect socket (don't block)
+      connectSocket().catch(() => {});
       
-      console.log("[DEBUG] AuthContext: Redirecting to home");
+      // Prefetch data IMMEDIATELY (no delay) for instant home screen load
+      setTimeout(async () => {
+        try {
+          const { fetchContactsFromAPI, fetchConversationsFromAPI } = await import("@/services/contactsService");
+          const { cacheContacts, cacheConversations } = await import("@/utils/network");
+          
+          const [contacts, conversations] = await Promise.all([
+            fetchContactsFromAPI(response.token, 1),
+            fetchConversationsFromAPI(response.token)
+          ]);
+          
+          // Cache immediately for instant load on home screen
+          if (contacts.length > 0) {
+            await cacheContacts(contacts);
+          }
+          if (conversations.length > 0) {
+            await cacheConversations(conversations);
+          }
+          
+          console.log('[Auth] Prefetched', contacts.length, 'contacts and', conversations.length, 'conversations');
+        } catch (error) {
+          console.log('[Auth] Prefetch error:', error);
+        }
+      }, 500);
+      
       router.replace("/(main)/home");
     }
   };
@@ -173,62 +153,57 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     name: string,
     avatar?: string
   ) => {
-    console.log("[DEBUG] AuthContext: signUp called", { email, name });
     const response = await authService.register(email, password, name, avatar || "");
-    console.log("[DEBUG] AuthContext: Register response", response);
     if (response.token) {
       await updateToken(response.token);
       
-      // Wait for socket to connect before navigating
-      try {
-        console.log("[DEBUG] AuthContext: Waiting for socket connection...");
-        await connectSocket();
-        console.log("[DEBUG] AuthContext: Socket connected successfully");
-        
-        // Prefetch contacts immediately after signup
-        try {
-          const { fetchContactsFromAPI } = await import("@/services/contactsService");
-          console.log("[DEBUG] AuthContext: Prefetching contacts...");
-          const contacts = await fetchContactsFromAPI(response.token);
-          console.log("[DEBUG] AuthContext: Prefetched", contacts?.length || 0, "contacts");
-        } catch (error) {
-          console.error("[DEBUG] AuthContext: Failed to prefetch contacts:", error);
-        }
-      } catch (error) {
-        console.error("[DEBUG] AuthContext: Socket connection failed, but continuing:", error);
-      }
+      // Try to connect socket (don't block)
+      connectSocket().catch(() => {});
       
-      console.log("[DEBUG] AuthContext: Redirecting to home");
+      // Prefetch data IMMEDIATELY (no delay) for instant home screen load
+      setTimeout(async () => {
+        try {
+          const { fetchContactsFromAPI, fetchConversationsFromAPI } = await import("@/services/contactsService");
+          const { cacheContacts, cacheConversations } = await import("@/utils/network");
+          
+          const [contacts, conversations] = await Promise.all([
+            fetchContactsFromAPI(response.token, 1),
+            fetchConversationsFromAPI(response.token)
+          ]);
+          
+          // Cache immediately for instant load on home screen
+          if (contacts.length > 0) {
+            await cacheContacts(contacts);
+          }
+          if (conversations.length > 0) {
+            await cacheConversations(conversations);
+          }
+          
+          console.log('[Auth] Prefetched', contacts.length, 'contacts and', conversations.length, 'conversations');
+        } catch (error) {
+          console.log('[Auth] Prefetch error:', error);
+        }
+      }, 500);
+      
       router.replace("/(main)/home");
     }
   };
 
   const signOut = async () => {
-    console.log("[DEBUG] AuthContext: Signing out");
-    
-    // Disconnect socket first
     disconnectSocket();
-    
-    // Clear auth state
     setToken(null);
     setUser(null);
     await AsyncStorage.removeItem("token");
     await AsyncStorage.removeItem("userData");
-    
     router.replace("/(auth)/welcome");
   };
 
   const refreshUser = (userData: UserProps) => {
-    console.log("[DEBUG] AuthContext: Refreshing user data", userData);
     setUser((prevUser) => ({
       ...prevUser,
       ...userData,
     }));
-    
-    // Persist updated user data to AsyncStorage
-    AsyncStorage.setItem("userData", JSON.stringify(userData)).catch((error) => {
-      console.error("[DEBUG] AuthContext: Failed to save user data:", error);
-    });
+    AsyncStorage.setItem("userData", JSON.stringify(userData)).catch(() => {});
   };
 
   return (

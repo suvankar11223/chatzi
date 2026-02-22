@@ -32,6 +32,21 @@ const RootLayout = () => {
         name="callHistory"
         options={{ headerShown: false }}
       />
+      <Stack.Screen
+        name="callScreen"
+        options={{
+          headerShown: false,
+          animation: "slide_from_bottom",
+        }}
+      />
+      <Stack.Screen
+        name="incomingCall"
+        options={{
+          headerShown: false,
+          presentation: "fullScreenModal",
+          animation: "slide_from_bottom",
+        }}
+      />
     </Stack>
   );
 };

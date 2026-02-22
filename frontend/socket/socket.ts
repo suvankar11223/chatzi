@@ -4,22 +4,50 @@ import { getLocalIP } from "@/utils/network";
 
 let socket: Socket | null = null;
 let connectionPromise: Promise<Socket> | null = null;
+let reconnectAttempts = 0;
+let maxReconnectAttempts = 10;
+let isConnecting = false;
+
+// Debug logging helper
+const logDebug = (message: string, ...args: any[]) => {
+  console.log(`[Socket:${new Date().toISOString()}]`, message, ...args);
+};
 
 // Get socket URL from network utility
 const getSocketURL = async (): Promise<string> => {
   try {
-    const ip = await getLocalIP();
-    console.log("[DEBUG] Socket: Using IP from network utility:", ip);
-    return `http://${ip}:3000`;
+    // Get the full server URL including protocol
+    const { getApiUrl } = await import("@/constants");
+    const apiUrl = await getApiUrl();
+    // Remove /api suffix to get base URL
+    const baseUrl = apiUrl.replace('/api', '');
+    
+    // For socket connection, use the same base URL but without https:// prefix issue
+    let socketUrl = baseUrl;
+    
+    // If it's an ngrok URL, keep https, otherwise use http for local
+    if (baseUrl.includes('ngrok') || baseUrl.includes('render')) {
+      // Keep the https for cloud URLs
+      socketUrl = baseUrl;
+    } else {
+      // For local, ensure http
+      socketUrl = baseUrl.replace('https://', 'http://');
+    }
+    
+    logDebug('Socket URL resolved:', socketUrl);
+    return socketUrl;
   } catch (error) {
-    console.warn("[DEBUG] Socket: Failed to get IP, using fallback");
+    logDebug('Failed to get socket URL, using fallback');
     return "https://chatzi-1m0m.onrender.com";
   }
 };
 
+/**
+ * Attempt to connect to socket server with retry logic
+ */
 export const connectSocket = async (): Promise<Socket> => {
   // If already connecting, return the existing promise
-  if (connectionPromise) {
+  if (connectionPromise && isConnecting) {
     return connectionPromise;
   }
 
@@ -31,133 +59,157 @@ export const connectSocket = async (): Promise<Socket> => {
 
   // If already connected, return existing socket
   if (socket && socket.connected) {
-    console.log("[DEBUG] Socket: Already connected, reusing existing connection");
     return socket;
   }
 
+  isConnecting = true;
+
   // Disconnect old socket if exists but not connected
   if (socket) {
-    console.log("[DEBUG] Socket: Cleaning up old socket");
     socket.removeAllListeners();
     socket.disconnect();
     socket = null;
   }
 
   const SOCKET_URL = await getSocketURL();
-  console.log("[DEBUG] Socket: Creating new connection to", SOCKET_URL);
 
-  // Create the socket connection with polling only (more reliable for mobile)
+  // Create the socket connection with improved settings
   socket = io(SOCKET_URL, {
     auth: {
       token
     },
-    transports: ["polling"], // Use polling only - more reliable for React Native
+    transports: ["websocket", "polling"], // WebSocket first for HTTPS
     reconnection: true,
-    reconnectionAttempts: 5,
-    reconnectionDelay: 500, // Reduced from 2000ms to 500ms for faster reconnection
-    reconnectionDelayMax: 3000,
-    timeout: 10000,
+    reconnectionAttempts: Infinity, // Never give up reconnecting
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 10000,
+    timeout: 20000,
     forceNew: true,
+    autoConnect: true,
+    secure: SOCKET_URL.startsWith('https'), // Use secure connection for HTTPS
   });
 
-  // Connection events
+  // Connection events - minimal logging
   socket.on("connect", () => {
-    console.log("[DEBUG] Socket: ✓ Connected successfully, ID:", socket?.id);
+    logDebug('Socket connected successfully', socket?.id);
+    isConnecting = false;
+    reconnectAttempts = 0;
+    lastConnectedTime = Date.now();
     connectionPromise = null;
   });
 
-  socket.on("connect_error", (error: any) => {
-    console.log("[DEBUG] Socket: Connection error:", error.message);
+  socket.on("connect_error", (error) => {
+    logDebug('Socket connection error:', error.message);
+    isConnecting = false;
+    reconnectAttempts++;
   });
 
   socket.on("disconnect", (reason) => {
-    console.log("[DEBUG] Socket: Disconnected:", reason);
-    // Don't auto-reconnect if it's a clean disconnect
+    logDebug('Socket disconnected:', reason);
     if (reason === "io client disconnect") {
       socket?.connect();
     }
   });
 
   socket.on("reconnect", (attemptNumber) => {
-    console.log("[DEBUG] Socket: ✓ Reconnected after", attemptNumber, "attempts");
-    // Request to rejoin conversations
+    logDebug('Socket reconnected after', attemptNumber, 'attempts');
     socket?.emit("rejoinConversations");
   });
 
   socket.on("reconnect_failed", () => {
-    console.error("[DEBUG] Socket: Reconnection failed");
+    logDebug('Socket reconnection failed after all attempts');
+    isConnecting = false;
     connectionPromise = null;
   });
 
-  // Create a promise that resolves when connected
+  socket.on("connect_timeout", () => {
+    logDebug('Socket connection timeout');
+  });
+
+  // Create a promise that resolves when connected or after timeout
   connectionPromise = new Promise((resolve) => {
-    // If already connected, resolve immediately
     if (socket?.connected) {
       resolve(socket);
       return;
     }
 
-    // Wait for connection
     const onConnect = () => {
-      console.log("[DEBUG] Socket: Connection established");
       socket?.off("connect", onConnect);
       socket?.off("connect_error", onError);
+      isConnecting = false;
       resolve(socket!);
     };
 
-    const onError = (error: any) => {
-      console.log("[DEBUG] Socket: Connection error, will retry:", error.message);
-      // Don't reject - let it keep retrying
+    const onError = () => {
+      isConnecting = false;
     };
 
     socket?.on("connect", onConnect);
     socket?.on("connect_error", onError);
 
-    // Timeout after 10 seconds
+    // Timeout after 15 seconds - keep trying in background
     setTimeout(() => {
       if (socket?.connected) {
         resolve(socket);
       } else {
-        console.log("[DEBUG] Socket: Connection timeout, but will keep retrying");
-        resolve(socket!); // Resolve anyway - will work in background
+        resolve(socket!);
       }
-    }, 10000);
+    }, 15000);
   });
 
   return connectionPromise;
 };
 
+let lastConnectedTime = 0;
+
+/**
+ * Disconnect from socket server
+ */
 export const disconnectSocket = () => {
+  isConnecting = false;
   connectionPromise = null;
+  reconnectAttempts = 0;
   if (socket) {
-    console.log("[DEBUG] Socket: Disconnecting...");
     socket.disconnect();
     socket = null;
   }
 };
 
+/**
+ * Get the current socket instance
+ */
 export const getSocket = (): Socket | null => {
   return socket;
 };
 
+/**
+ * Check if socket is connected
+ */
 export const isSocketConnected = (): boolean => {
   return socket?.connected || false;
 };
 
+/**
+ * Emit an event through the socket
+ */
 export const emitEvent = (event: string, data?: any) => {
   if (socket && socket.connected) {
     socket.emit(event, data);
-  } else {
-    console.warn("[DEBUG] Socket: Cannot emit, socket not connected");
   }
 };
 
+/**
+ * Listen for an event
+ */
 export const onEvent = (event: string, callback: (data: any) => void) => {
   if (socket) {
     socket.on(event, callback);
   }
 };
 
+/**
+ * Remove event listener
+ */
 export const offEvent = (event: string, callback?: (data: any) => void) => {
   if (socket) {
     if (callback) {
@@ -195,4 +247,17 @@ export const setUserOnline = () => {
 
 export const setUserOffline = () => {
   emitEvent("userOffline", {});
+};
+
+/**
+ * Manually trigger a reconnection attempt
+ */
+export const reconnectSocket = async (): Promise<Socket | null> => {
+  disconnectSocket();
+  reconnectAttempts = 0;
+  try {
+    return await connectSocket();
+  } catch (error) {
+    return null;
+  }
 };

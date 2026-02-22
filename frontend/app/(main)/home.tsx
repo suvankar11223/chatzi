@@ -12,170 +12,189 @@ import { ConversationProps, ResponseProps } from '@/types';
 import { useFocusEffect } from '@react-navigation/native';
 import { getConversations, newConversation, newMessage, getContacts } from '@/socket/socketEvents';
 import { getSocket } from '@/socket/socket';
-import { fetchContactsFromAPI } from '@/services/contactsService';
+import { fetchContactsFromAPI, fetchConversationsFromAPI } from '@/services/contactsService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 
 const Home = () => {
   const router = useRouter();
   const { user } = useAuth();
+  const { isOnline } = useOnlineStatus();
   const [selectedTab, setSelectedTab] = useState<'direct' | 'group'>('direct');
   const [conversations, setConversations] = useState<ConversationProps[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [socketConnected, setSocketConnected] = useState(false);
 
-  // Monitor socket connection status
+  // Instant load - load from cache immediately, then refresh
   useEffect(() => {
-    const checkSocket = () => {
-      const socket = getSocket();
-      setSocketConnected(socket?.connected || false);
+    console.log('[DEBUG] Home: Component mounted');
+    
+    // Step 1: Load cached data INSTANTLY (no waiting)
+    loadCachedData();
+    
+    // Step 2: Fetch fresh data in background
+    fetchFreshData();
+    
+    // Step 3: Setup socket for real-time updates
+    setupSocketListeners();
+
+    return () => {
+      cleanupSocketListeners();
     };
-
-    // Check immediately
-    checkSocket();
-
-    // Check every 2 seconds
-    const interval = setInterval(checkSocket, 2000);
-
-    return () => clearInterval(interval);
   }, []);
 
+  // Instant load from cache
+  const loadCachedData = async () => {
+    try {
+      const { getCachedContacts, getCachedConversations } = await import('@/utils/network');
+      const [cachedContacts, cachedConversations] = await Promise.all([
+        getCachedContacts(),
+        getCachedConversations()
+      ]);
+      
+      if (cachedContacts && cachedContacts.length > 0) {
+        console.log('[DEBUG] Home: Loaded', cachedContacts.length, 'contacts from cache');
+        setContacts(cachedContacts);
+      }
+      
+      if (cachedConversations && cachedConversations.length > 0) {
+        console.log('[DEBUG] Home: Loaded', cachedConversations.length, 'conversations from cache');
+        setConversations(cachedConversations);
+      }
+    } catch (error) {
+      console.log('[DEBUG] Home: Error loading cache:', error);
+    }
+  };
 
+  // Fetch fresh data from API (non-blocking)
+  const fetchFreshData = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token) {
+        console.log('[DEBUG] Home: No token found');
+        return;
+      }
 
-  useEffect(() => {
-    console.log('[DEBUG] Home: Component mounted, fetching data');
-    setLoading(true);
-    
-    // Setup socket listeners for real-time updates
+      const { fetchContactsFromAPI, fetchConversationsFromAPI } = await import('@/services/contactsService');
+      
+      // Fetch in parallel
+      const [apiContacts, apiConversations] = await Promise.all([
+        fetchContactsFromAPI(token, 1), // 1 retry only for speed
+        fetchConversationsFromAPI(token)
+      ]);
+
+      console.log('[DEBUG] Home: Fresh data -', apiContacts?.length || 0, 'contacts,', apiConversations?.length || 0, 'conversations');
+
+      if (apiContacts && apiContacts.length > 0) {
+        setContacts(apiContacts);
+      }
+
+      if (apiConversations && apiConversations.length > 0) {
+        setConversations(apiConversations);
+      }
+    } catch (error) {
+      console.log('[DEBUG] Home: Error fetching fresh data:', error);
+    }
+  };
+
+  // Setup socket listeners for real-time updates
+  const setupSocketListeners = () => {
     getConversations(processConversations);
     newConversation(newConversationHandler);
     getContacts(processContacts);
 
-    // Listen for new messages to update lastMessage in conversations
     const handleNewMessage = (res: ResponseProps) => {
-      console.log('[DEBUG] handleNewMessage:', res);
       if (res.success && res.data) {
         const { conversationId, content, createdAt, sender, attachment, id } = res.data;
+        const isMyMessage = sender.id === user?.id;
         
-        // Update the conversation's lastMessage or add new conversation
         setConversations((prev) => {
           const existingConv = prev.find(conv => conv._id === conversationId);
-          
           if (existingConv) {
-            // Update existing conversation
-            console.log('[DEBUG] Updating existing conversation:', conversationId);
-            return prev.map((conv) => 
-              conv._id === conversationId
-                ? {
-                    ...conv,
-                    lastMessage: {
-                      _id: id,
-                      content,
-                      createdAt,
-                      senderId: sender.id,
-                      type: attachment ? 'image' as const : 'text' as const,
-                      attachment,
-                    },
-                    updatedAt: createdAt,
-                  }
-                : conv
-            );
-          } else {
-            // Conversation doesn't exist, fetch it
-            console.log('[DEBUG] Conversation not found, refreshing list');
-            getConversations(null);
-            return prev;
+            const updatedConv = {
+              ...existingConv,
+              lastMessage: { _id: id, content, createdAt, senderId: sender.id, type: attachment ? 'image' as const : 'text' as const, attachment },
+              updatedAt: createdAt,
+              unreadCount: isMyMessage ? existingConv.unreadCount : (existingConv.unreadCount || 0) + 1,
+            };
+            const filtered = prev.filter(c => c._id !== conversationId);
+            return [updatedConv, ...filtered];
           }
+          return prev;
         });
       }
     };
 
     newMessage(handleNewMessage);
-
-    // Fetch data immediately from API (most reliable - no delay)
-    const fetchInitialData = async () => {
-      console.log('[DEBUG] Home: Fetching initial data from API');
-      
-      // Fetch contacts from API immediately (no waiting)
-      loadContactsFromAPI();
-      
-      // Also fetch conversations from socket in parallel
-      const socket = getSocket();
-      if (socket && socket.connected) {
-        console.log('[DEBUG] Home: Socket connected, fetching conversations');
-        getConversations(null);
-        getContacts(null); // Also try socket as backup
-      } else {
-        console.log('[DEBUG] Home: Socket not connected, will retry shortly');
-        // Retry socket connection after 1 second (reduced from 2 seconds)
-        setTimeout(() => {
-          const s = getSocket();
-          if (s && s.connected) {
-            getConversations(null);
-            getContacts(null);
-          }
-        }, 1000);
-      }
-      
-      setLoading(false);
-    };
-
-    fetchInitialData();
-
-    return () => {
-      console.log('[DEBUG] Home: Cleaning up socket listeners');
-      getConversations(processConversations, true);
-      newConversation(newConversationHandler, true);
-      newMessage(handleNewMessage, true);
-      getContacts(processContacts, true);
-    };
-  }, []);
-
-  const processContacts = (res: ResponseProps) => {
-    console.log('[DEBUG] processContacts received:', res);
-    setLoading(false);
-    if (res.success) {
-      setContacts(res.data || []);
-      console.log('[DEBUG] Loaded', (res.data || []).length, 'contacts via socket');
-      if (res.data && res.data.length > 0) {
-        console.log('[DEBUG] Contact names:', res.data.map((c: any) => c.name).join(', '));
-      }
-    } else {
-      console.log('[DEBUG] Failed to load contacts via socket:', res.msg);
-      // Fallback: Try to load contacts from API
-      loadContactsFromAPI();
+    
+    const socket = getSocket();
+    if (socket) {
+      socket.on('markAsRead', (res: ResponseProps) => {
+        if (res.success && res.data?.conversationId) {
+          setConversations(prev => prev.map(c => c._id === res.data.conversationId ? { ...c, unreadCount: 0 } : c));
+        }
+      });
     }
   };
 
-  // Fallback function to load contacts from API
+  const cleanupSocketListeners = () => {
+    getConversations(processConversations, true);
+    newConversation(newConversationHandler, true);
+    getContacts(processContacts, true);
+    newMessage(() => {}, true);
+  };
+
+  const processContacts = (res: ResponseProps) => {
+    console.log('[DEBUG] processContacts received:', res);
+    if (res.success) {
+      setContacts(res.data || []);
+      console.log('[DEBUG] Loaded', (res.data || []).length, 'contacts via socket');
+    }
+  };
+
+  // Fallback function to load contacts and conversations from API
   const loadContactsFromAPI = async () => {
     try {
-      console.log('[DEBUG] Loading contacts from API');
+      console.log('[DEBUG] Loading contacts and conversations from API');
       const token = await AsyncStorage.getItem('token');
       if (!token) {
         console.log('[DEBUG] No token found');
-        setLoading(false);
         return;
       }
       
-      const apiContacts = await fetchContactsFromAPI(token);
+      // Fetch both contacts and conversations in parallel
+      const [apiContacts, apiConversations] = await Promise.all([
+        fetchContactsFromAPI(token),
+        fetchConversationsFromAPI(token)
+      ]);
+      
       console.log('[DEBUG] API returned:', apiContacts?.length || 0, 'contacts');
+      console.log('[DEBUG] API returned:', apiConversations?.length || 0, 'conversations');
       
       if (apiContacts && apiContacts.length > 0) {
         console.log('[DEBUG] Loaded', apiContacts.length, 'contacts from API');
         console.log('[DEBUG] Contact names:', apiContacts.map((c: any) => c.name).join(', '));
         setContacts(apiContacts);
-        setLoading(false);
       } else {
         console.log('[DEBUG] No contacts returned from API');
-        setContacts([]);
-        setLoading(false);
+        // Still show cached if available
+        setContacts(apiContacts || []);
+      }
+      
+      if (apiConversations && apiConversations.length > 0) {
+        console.log('[DEBUG] Loaded', apiConversations.length, 'conversations from API');
+        // Update conversations list - merge with existing or replace
+        setConversations((prev) => {
+          const existingIds = new Set(prev.map(c => c._id));
+          const newConversations = apiConversations.filter((c: any) => !existingIds.has(c._id));
+          return [...newConversations, ...prev];
+        });
+      } else {
+        console.log('[DEBUG] No conversations returned from API');
       }
     } catch (error) {
-      console.error('[DEBUG] Error loading contacts from API:', error);
-      setContacts([]);
-      setLoading(false);
+      console.error('[DEBUG] Error loading data from API:', error);
     }
   };
 
@@ -183,12 +202,9 @@ const Home = () => {
 
   const processConversations = (res: ResponseProps) => {
     console.log('[DEBUG] processConversations:', res);
-    setLoading(false);
     if (res.success) {
       setConversations(res.data);
       console.log('[DEBUG] Loaded', res.data.length, 'conversations');
-    } else {
-      console.log('[DEBUG] Failed to load conversations:', res.msg);
     }
   };
 
@@ -298,9 +314,19 @@ const Home = () => {
 
       if (existingConv) {
         console.log('[DEBUG] Found existing conversation:', existingConv._id);
+        
+        // Reset unread count locally
+        setConversations(prev =>
+          prev.map(c =>
+            c._id === existingConv._id
+              ? { ...c, unreadCount: 0 }
+              : c
+          )
+        );
+        
         // Navigate to existing conversation
         router.push({
-          pathname: "/(main)/conversation" as any,
+          pathname: "/conversation",
           params: {
             id: existingConv._id,
             name: contact.name,
@@ -314,43 +340,29 @@ const Home = () => {
         // Create new conversation via socket
         const socket = getSocket();
         if (!socket || !socket.connected) {
-          console.error('[DEBUG] Socket not connected');
-          Alert.alert('Connection Error', 'Cannot connect to server. Please try again.');
-          return;
-        }
-
-        // Emit newConversation event directly
-        socket.emit('newConversation', {
-          type: 'direct',
-          participants: [user?.id, contact._id],
-        });
-
-        // Listen for response
-        const handleNewConversation = (response: ResponseProps) => {
-          console.log('[DEBUG] newConversation response:', response);
-          if (response.success && response.data) {
-            // Remove listener
-            socket.off('newConversation', handleNewConversation);
+          console.log('[DEBUG] Socket not connected, attempting to reconnect...');
+          
+          // Try to reconnect
+          try {
+            const { connectSocket } = await import('@/socket/socket');
+            await connectSocket();
+            const newSocket = getSocket();
             
-            // Navigate to new conversation
-            router.push({
-              pathname: "/(main)/conversation" as any,
-              params: {
-                id: response.data._id,
-                name: contact.name,
-                avatar: contact.avatar || '',
-                type: "direct",
-                participants: JSON.stringify(response.data.participants),
-              },
-            });
-          } else {
-            console.error('[DEBUG] Failed to create conversation:', response.msg);
-            socket.off('newConversation', handleNewConversation);
-            Alert.alert('Error', response.msg || 'Failed to create conversation');
+            if (!newSocket || !newSocket.connected) {
+              Alert.alert('Connection Error', 'Cannot connect to server. Please check your internet connection and try again.');
+              return;
+            }
+            
+            // Continue with the connected socket
+            createNewConversation(newSocket, contact);
+          } catch (error) {
+            console.error('[DEBUG] Reconnection failed:', error);
+            Alert.alert('Connection Error', 'Cannot connect to server. Please try again.');
+            return;
           }
-        };
-
-        socket.on('newConversation', handleNewConversation);
+        } else {
+          createNewConversation(socket, contact);
+        }
       }
     } catch (error) {
       console.error('[DEBUG] Error in startConversationWithUser:', error);
@@ -359,10 +371,50 @@ const Home = () => {
     console.log('='.repeat(60));
   };
 
-  // Show all users in direct messages, not just those without conversations
-  const allUsers = contacts;
+  const createNewConversation = (socket: any, contact: any) => {
+    // Emit newConversation event directly
+    socket.emit('newConversation', {
+      type: 'direct',
+      participants: [user?.id, contact._id],
+    });
+
+    // Listen for response
+    const handleNewConversation = (response: ResponseProps) => {
+      console.log('[DEBUG] newConversation response:', response);
+      if (response.success && response.data) {
+        // Remove listener
+        socket.off('newConversation', handleNewConversation);
+        
+        // Navigate to new conversation
+        router.push({
+          pathname: "/conversation",
+          params: {
+            id: response.data._id,
+            name: contact.name,
+            avatar: contact.avatar || '',
+            type: "direct",
+            participants: JSON.stringify(response.data.participants),
+          },
+        });
+      } else {
+        console.error('[DEBUG] Failed to create conversation:', response.msg);
+        socket.off('newConversation', handleNewConversation);
+        Alert.alert('Error', response.msg || 'Failed to create conversation');
+      }
+    };
+
+    socket.on('newConversation', handleNewConversation);
+  };
 
   // Separate conversations by type and sort by most recent
+  const directConversations = conversations
+    .filter((item: ConversationProps) => item.type === "direct")
+    .sort((a: ConversationProps, b: ConversationProps) => {
+      const aDate = a?.lastMessage?.createdAt || a.createdAt;
+      const bDate = b?.lastMessage?.createdAt || b.createdAt;
+      return new Date(bDate).getTime() - new Date(aDate).getTime();
+    });
+
   const groupConversations = conversations
     .filter((item: ConversationProps) => item.type === "group")
     .sort((a: ConversationProps, b: ConversationProps) => {
@@ -370,6 +422,22 @@ const Home = () => {
       const bDate = b?.lastMessage?.createdAt || b.createdAt;
       return new Date(bDate).getTime() - new Date(aDate).getTime();
     });
+
+  // Contacts who DON'T have a conversation yet (shown below active chats)
+  const contactsWithoutConversation = contacts.filter(contact =>
+    !conversations.some((conv: ConversationProps) =>
+      conv.type === 'direct' &&
+      conv.participants.some((p: any) => p._id === contact._id)
+    )
+  );
+
+  // Debug logging
+  if (contactsWithoutConversation.length > 0) {
+    console.log('[DEBUG] Contacts without conversation:', contactsWithoutConversation.map(c => ({ id: c._id, name: c.name, email: c.email })));
+  }
+
+  // Final merged list: active chats first (sorted), then unused contacts
+  const directListData = [...directConversations, ...contactsWithoutConversation];
 
 
 
@@ -384,21 +452,22 @@ const Home = () => {
       );
     }
 
-    if (!socketConnected) {
+    // Show empty state only if we have no data at all
+    if (directListData.length === 0 && groupConversations.length === 0) {
       return (
         <View style={styles.centerContainer}>
-          <Typo size={16} color={colors.rose} style={{ textAlign: 'center', marginBottom: 10 }}>
-            Connection issue
+          <Typo size={16} color={colors.neutral600} style={{ textAlign: 'center' }}>
+            {selectedTab === 'direct' ? 'No other users found' : 'No groups yet'}
           </Typo>
-          <Typo size={14} color={colors.neutral600} style={{ textAlign: 'center', marginBottom: 20 }}>
-            Cannot connect to server. Make sure backend is running.
+          <Typo size={14} color={colors.neutral500} style={{ textAlign: 'center', marginTop: 8 }}>
+            {selectedTab === 'direct' ? 'Register another account to chat' : ''}
           </Typo>
           <TouchableOpacity
             style={styles.retryButton}
             onPress={refreshConversations}
           >
             <Typo size={14} fontWeight="600" color={colors.white}>
-              Retry Connection
+              Refresh
             </Typo>
           </TouchableOpacity>
         </View>
@@ -406,7 +475,7 @@ const Home = () => {
     }
 
     // Prepare data for FlatList based on selected tab
-    const listData = selectedTab === 'direct' ? allUsers : groupConversations;
+    const listData = selectedTab === 'direct' ? directListData : groupConversations;
 
     if (listData.length === 0) {
       return (
@@ -432,23 +501,18 @@ const Home = () => {
         }
         renderItem={({ item, index }) => {
           if (selectedTab === 'direct') {
-            // Check if there's an existing conversation with this user
-            const existingConv = conversations.find((conv: ConversationProps) => {
-              if (conv.type !== 'direct') return false;
-              return conv.participants.some((p: any) => p._id === item._id);
-            });
-
-            if (existingConv) {
-              // Show as conversation item
+            // Check if this item is a conversation (has participants array from DB)
+            if (item.participants && item.lastMessage !== undefined) {
+              // It's a conversation - show with ConversationItem
               return (
                 <ConversationItem
-                  item={existingConv}
+                  item={item}
                   router={router}
                   showDivider={index < listData.length - 1}
                 />
               );
             } else {
-              // Show as available user
+              // It's a plain contact (no conversation yet)
               return (
                 <TouchableOpacity
                   style={styles.userItem}
@@ -456,19 +520,22 @@ const Home = () => {
                     console.log('[DEBUG] TOUCH DETECTED for:', item.name);
                     startConversationWithUser(item);
                   }}
-                  onPressIn={() => console.log('[DEBUG] PRESS IN:', item.name)}
                   activeOpacity={0.7}
                 >
-                  <Avatar size={50} uri={item.avatar} />
+                  <Avatar 
+                    size={52} 
+                    uri={item.avatar}
+                    showOnline={true}
+                    isOnline={isOnline(item._id)}
+                  />
                   <View style={styles.userInfo}>
                     <Typo size={16} fontWeight="600" color={colors.neutral900}>
-                      {item.name}
+                      {item.name || item.email || 'Unknown User'}
                     </Typo>
-                    <Typo size={14} color={colors.neutral500}>
+                    <Typo size={13} color={colors.neutral400}>
                       Tap to start chatting
                     </Typo>
                   </View>
-                  <Feather name="arrow-right" size={20} color={colors.neutral400} />
                 </TouchableOpacity>
               );
             }
@@ -490,7 +557,7 @@ const Home = () => {
 
   const openNewGroupModal = () => {
     router.push({
-      pathname: '/(main)/newConversationModal',
+      pathname: '/newConversationModal',
       params: { isGroup: '1' }
     });
   };

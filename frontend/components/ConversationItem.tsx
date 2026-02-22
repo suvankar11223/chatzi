@@ -1,20 +1,23 @@
 import { colors, spacingX, spacingY } from "@/constants/theme";
 import { ConversationListItemProps } from "@/types";
-import moment from "moment";
 import React from "react";
 import { StyleSheet, TouchableOpacity, View } from "react-native";
 import Avatar from "./Avatar";
 import Typo from "./Typo";
 import { useAuth } from "@/context/authContext";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 const ConversationItem = ({
   item,
   showDivider,
   router,
 }: ConversationListItemProps) => {
+  const { user: currentUser } = useAuth();
+  const { isOnline } = useOnlineStatus();
+
   const openConversation = () => {
     router.push({
-      pathname: "/(main)/conversation",
+      pathname: "/conversation",
       params: {
         id: item._id,
         name: isDirect ? otherParticipant?.name : item.name,
@@ -25,8 +28,6 @@ const ConversationItem = ({
     });
   };
 
-  const { user: currentUser } = useAuth();
-
   const lastMessage: any = item.lastMessage;
   const isDirect = item.type === "direct";
   let avatar = item.avatar;
@@ -35,54 +36,92 @@ const ConversationItem = ({
     : null;
   if (isDirect && otherParticipant) avatar = otherParticipant?.avatar;
 
+  const displayName = isDirect ? (otherParticipant?.name || 'Unknown') : (item?.name || 'Unknown');
+
+  const online = isDirect ? isOnline(otherParticipant?._id || '') : false;
+
   const getLastMessageContent = () => {
     if (!lastMessage) return "Say hi 👋";
+    return lastMessage?.attachment ? "📷 Image" : lastMessage.content;
+  };
 
-    return lastMessage?.attachment ? "Image" : lastMessage.content;
+  const formatTime = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+
+    if (isToday) {
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    const daysDiff = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysDiff < 7) {
+      return date.toLocaleDateString([], { weekday: 'short' }); // "Mon"
+    }
+
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' }); // "Dec 12"
   };
 
   const getLastMessageDate = () => {
     if (!lastMessage?.createdAt) return null;
-
-    const messageDate = moment(lastMessage.createdAt);
-    const now = moment();
-
-    if (messageDate.isSame(now, "day")) {
-      return messageDate.format("h:mm A");
-    } else if (messageDate.isSame(now.subtract(1, "day"), "day")) {
-      return "Yesterday";
-    } else if (messageDate.isSame(now, "week")) {
-      return messageDate.format("dddd");
-    } else if (messageDate.isSame(now, "year")) {
-      return messageDate.format("MMM D");
-    } else {
-      return messageDate.format("MMM D, YYYY");
-    }
+    return formatTime(lastMessage.createdAt);
   };
+
+  const unreadCount = item.unreadCount || 0;
+  const hasUnread = unreadCount > 0;
 
   return (
     <>
       <TouchableOpacity style={styles.container} onPress={openConversation}>
-        <View>
-          <Avatar uri={avatar} size={47} isGroup={item.type === "group"} />
+        {/* Avatar */}
+        <View style={styles.avatarWrapper}>
+          <Avatar 
+            uri={avatar} 
+            size={52} 
+            isGroup={item.type === "group"}
+            showOnline={item.type === "direct"}
+            isOnline={online}
+          />
         </View>
 
-        <View style={{ flex: 1 }}>
-          <View style={styles.row}>
-            <Typo size={17} fontWeight={"600"}>
-              {isDirect ? otherParticipant?.name : item?.name}
-            </Typo>
-
-            {item.lastMessage && <Typo size={15}>{getLastMessageDate()}</Typo>}
-          </View>
-
+        {/* Middle: name + last message */}
+        <View style={styles.content}>
           <Typo
-            size={15}
-            color={colors.neutral600}
+            size={16}
+            fontWeight={hasUnread ? "700" : "600"}
+            color={colors.neutral900}
+            textProps={{ numberOfLines: 1 }}
+          >
+            {displayName}
+          </Typo>
+          <Typo
+            size={13}
+            color={hasUnread ? colors.neutral700 : colors.neutral500}
+            fontWeight={hasUnread ? "500" : "400"}
             textProps={{ numberOfLines: 1 }}
           >
             {getLastMessageContent()}
           </Typo>
+        </View>
+
+        {/* Right: time + badge */}
+        <View style={styles.right}>
+          {lastMessage && (
+            <Typo 
+              size={11} 
+              color={hasUnread ? colors.primary : colors.neutral400}
+              fontWeight={hasUnread ? "600" : "400"}
+            >
+              {getLastMessageDate()}
+            </Typo>
+          )}
+          {hasUnread && (
+            <View style={styles.badge}>
+              <Typo size={11} fontWeight="700" color={colors.white}>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </Typo>
+            </View>
+          )}
         </View>
       </TouchableOpacity>
 
@@ -99,17 +138,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacingX._20,
     paddingVertical: spacingY._12,
     alignItems: "center",
-    gap: 12,
+    backgroundColor: colors.white,
   },
-  row: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  avatarWrapper: {
+    marginRight: spacingX._12,
+  },
+  content: {
+    flex: 1,
+    gap: 3,
+  },
+  right: {
+    alignItems: "flex-end",
+    gap: 6,
+    minWidth: 48,
+  },
+  badge: {
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    minWidth: 22,
+    height: 22,
+    justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: 6,
   },
   divider: {
     height: 1,
-    backgroundColor: colors.neutral200,
-    marginLeft: spacingX._20 + 47 + 12,
-    marginRight: spacingX._20,
+    backgroundColor: colors.neutral100,
+    marginLeft: spacingX._20 + 52 + spacingX._12,
   },
 });

@@ -150,7 +150,7 @@ const NewConversationModal = () => {
             // Navigate to conversation with real ID
             router.back();
             router.push({
-              pathname: "/(main)/conversation",
+              pathname: "/conversation",
               params: {
                 id: conversation._id,
                 name: user.name,
@@ -238,7 +238,7 @@ const NewConversationModal = () => {
           // Small delay to ensure modal is closed
           setTimeout(() => {
             router.push({
-              pathname: "/(main)/conversation",
+              pathname: "/conversation",
               params: {
                 id: conversation._id,
                 name: groupName,
