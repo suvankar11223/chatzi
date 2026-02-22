@@ -6,6 +6,7 @@ import connectDB from './config/db.js';
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import callRoutes from './routes/call.routes.js';
+import livekitRoutes from './routes/livekit.routes.js';
 import { initializeSocket } from './socket/socket.js';
 import os from 'os';
 
@@ -74,6 +75,7 @@ app.get('/api/discover', (_req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/calls', callRoutes);
+app.use('/api/livekit', livekitRoutes);
 
 // 404 handler for undefined routes
 app.use((_req, res) => {

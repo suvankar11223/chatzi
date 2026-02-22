@@ -1,5 +1,6 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import Call from '../modals/Call.js';
+import { AccessToken } from 'livekit-server-sdk';
 
 export function registerCallEvents(io: SocketIOServer, socket: Socket) {
   const userId = (socket as any).userId;
@@ -11,23 +12,43 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
     conversationId: string;
     callerName: string;
     callerAvatar: string;
+    roomName: string;
+    wsUrl: string;
   }) => {
     try {
-      const channelName = `call_${userId}_${Date.now()}`;
+      const { receiverId, callType, conversationId, callerName, callerAvatar, roomName, wsUrl } = data;
+
+      // Generate LiveKit token for RECEIVER
+      const apiKey = process.env.LIVEKIT_API_KEY!;
+      const apiSecret = process.env.LIVEKIT_API_SECRET!;
+
+      const receiverToken = new AccessToken(apiKey, apiSecret, {
+        identity: `receiver-${receiverId}`,
+        ttl: '1h',
+      });
+
+      receiverToken.addGrant({
+        roomJoin: true,
+        room: roomName,
+        canPublish: true,
+        canSubscribe: true,
+      });
+
+      const receiverJwt = await receiverToken.toJwt();
 
       const call = await Call.create({
         callerId: userId,
-        receiverId: data.receiverId,
-        conversationId: data.conversationId,
-        type: data.callType,
+        receiverId,
+        conversationId,
+        type: callType,
         status: 'missed',
-        agoraChannel: channelName,
+        agoraChannel: roomName,
       });
 
       // Find receiver socket
       const allSockets = Array.from(io.sockets.sockets.values());
       const receiverSockets = allSockets.filter(
-        (s) => (s as any).userId === data.receiverId
+        (s) => (s as any).userId === receiverId
       );
 
       if (receiverSockets.length === 0) {
@@ -39,27 +60,38 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
         return;
       }
 
-      // Notify receiver
+      // Get receiver's name
+      const User = (await import('../modals/userModal.js')).default;
+      const receiver = await User.findById(receiverId);
+      const receiverName = receiver?.name || 'You';
+
+      // Notify receiver with their own token
       receiverSockets.forEach((s) => {
         s.emit('incomingCall', {
           callId: call._id,
           callerId: userId,
-          callerName: data.callerName,
-          callerAvatar: data.callerAvatar,
-          callType: data.callType,
-          channelName,
-          conversationId: data.conversationId,
+          callerName,
+          callerAvatar,
+          callType,
+          roomName,
+          token: receiverJwt,
+          wsUrl,
+          conversationId,
+          receiverName,
         });
       });
 
-      // Tell caller to join Agora
+      // Tell caller: call created
       socket.emit('callInitiated', {
         success: true,
         callId: call._id,
-        channelName,
+        roomName,
       });
+
+      socket.emit('callResponse', { success: true });
     } catch (err: any) {
-      socket.emit('callResponse', { success: false, msg: err.message });
+      console.error('[Call] initiateCall error:', err);
+      socket.emit('callResponse', { success: false, msg: 'Server error' });
     }
   });
 
