@@ -18,6 +18,22 @@ const messageSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     }],
+    // Call message fields
+    isCallMessage: {
+      type: Boolean,
+      default: false,
+    },
+    callData: {
+      type: {
+        type: String, // 'voice' or 'video'
+        enum: ['voice', 'video'],
+      },
+      duration: Number, // in seconds
+      status: {
+        type: String,
+        enum: ['completed', 'missed', 'declined'],
+      },
+    },
   },
   {
     timestamps: true,

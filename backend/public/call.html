@@ -293,10 +293,13 @@
     const serverUrl  = p.get('serverUrl');
     const token      = p.get('token');
     const otherName  = p.get('name') || 'User';
+    const conversationId = p.get('conversationId') || '';
 
     let localStream = null, peerConnection = null;
     let isMuted = false, isCamOff = false;
     let socket = null, timerInterval = null;
+    let callStartTime = null;
+    let callConnected = false;
 
     const iceConfig = { 
       iceServers: [
@@ -328,6 +331,8 @@
       statusDotEl.className = state;
       if (state === 'connected') {
         statusOverlay.classList.add('hidden');
+        callConnected = true;
+        callStartTime = Date.now();
         startTimer();
       }
     }
@@ -447,7 +452,19 @@
     }
 
     function endCall() {
-      socket?.emit('endCallRoom', { roomId });
+      const duration = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
+      
+      socket?.emit('endCallRoom', { 
+        roomId,
+        callData: {
+          conversationId,
+          callerId: userId,
+          duration,
+          callType,
+          status: callConnected ? 'completed' : 'missed',
+        }
+      });
+      
       cleanup();
       window.ReactNativeWebView?.postMessage(JSON.stringify({ type: 'endCall' }));
     }
