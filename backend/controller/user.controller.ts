@@ -2,6 +2,40 @@ import { Request, Response } from 'express';
 import User from '../modals/userModal.js';
 import { createStreamUser } from '../services/streamService.js';
 
+// Debug logging helper
+const logDebug = (message: string, ...args: any[]) => {
+  console.log(`[Controller:${new Date().toISOString()}]`, message, ...args);
+};
+
+// API endpoint to get all conversations for a user
+export const getConversations = async (req: Request, res: Response) => {
+  try {
+    const currentUserId = (req as any).user.userId;
+    logDebug('getConversations API: Fetching for user:', currentUserId);
+    
+    const Conversation = (await import('../modals/Conversation.js')).default;
+    
+    // Get all conversations where user is a participant
+    const conversations = await Conversation.find({
+      participants: currentUserId
+    })
+    .populate('participants', 'name avatar email')
+    .populate('lastMessage')
+    .sort({ updatedAt: -1 })
+    .lean();
+    
+    console.log('[DEBUG] getConversations API: Found', conversations.length, 'conversations');
+    
+    res.status(200).json({
+      success: true,
+      data: conversations,
+    });
+  } catch (error: any) {
+    console.error('[ERROR] getConversations API:', error);
+    res.status(500).json({ success: false, msg: error.message });
+  }
+};
+
 export const ensureStreamUsers = async (req: Request, res: Response) => {
   try {
     const { userIds } = req.body;
@@ -178,6 +212,7 @@ export const getContacts = async (req: Request, res: Response) => {
     console.log('[DEBUG] getContacts API: Request received');
     console.log('[DEBUG] Current user ID:', currentUserId);
     console.log('[DEBUG] Current user email:', currentUserEmail);
+    console.log('[DEBUG] Request headers:', JSON.stringify(req.headers).substring(0, 200));
     
     // Get all users except the current user
     const users = await User.find({ _id: { $ne: currentUserId } }).select('-password');
@@ -187,8 +222,11 @@ export const getContacts = async (req: Request, res: Response) => {
     if (users.length > 0) {
       console.log('[DEBUG] Contact names:', users.map(u => u.name).join(', '));
       console.log('[DEBUG] Contact emails:', users.map(u => u.email).join(', '));
+      console.log('[DEBUG] Contact IDs:', users.map(u => u._id).join(', '));
     } else {
       console.log('[DEBUG] WARNING: No other users found in database!');
+      console.log('[DEBUG] Total users in DB:', await User.countDocuments());
+      console.log('[DEBUG] Current user is the only user? Check if database was seeded.');
     }
     
     const formattedUsers = users.map(user => ({
@@ -199,6 +237,7 @@ export const getContacts = async (req: Request, res: Response) => {
     }));
 
     console.log('[DEBUG] getContacts API: Returning', formattedUsers.length, 'contacts');
+    console.log('[DEBUG] Response data:', JSON.stringify({ success: true, data: formattedUsers }).substring(0, 300));
     console.log('='.repeat(60));
 
     res.status(200).json({
@@ -208,6 +247,7 @@ export const getContacts = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('='.repeat(60));
     console.error('[ERROR] Get contacts API:', error);
+    console.error('[ERROR] Stack:', error.stack);
     console.error('='.repeat(60));
     res.status(500).json({ success: false, msg: error.message });
   }

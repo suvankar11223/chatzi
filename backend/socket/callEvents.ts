@@ -1,398 +1,136 @@
-import { Server as SocketIOServer, Socket } from "socket.io";
-import Call from "../modals/Call.js";
-import mongoose from "mongoose";
+import { Server as SocketIOServer, Socket } from 'socket.io';
+import Call from '../modals/Call.js';
 
-// ICE server configuration
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:stun3.l.google.com:19302" },
-    { urls: "stun:stun4.l.google.com:19302" },
-    // Add TURN servers here for production
-    // {
-    //   urls: 'turn:your-turn-server.com:3478',
-    //   username: 'username',
-    //   credential: 'password'
-    // }
-  ],
-};
-
-// Store active calls
-const activeCalls = new Map<string, {
-  callId: string;
-  callerId: string;
-  calleeId: string;
-  type: "audio" | "video";
-}>();
-
-export const registerCallEvents = (io: SocketIOServer, socket: Socket) => {
+export function registerCallEvents(io: SocketIOServer, socket: Socket) {
   const userId = (socket as any).userId;
 
-  // Get call history for a user
-  socket.on("getCallHistory", async (data: { limit?: number; offset?: number }, callback) => {
+  // ─── INITIATE CALL ────────────────────────────────
+  socket.on('initiateCall', async (data: {
+    receiverId: string;
+    callType: 'voice' | 'video';
+    conversationId: string;
+    callerName: string;
+    callerAvatar: string;
+  }) => {
     try {
-      const limit = data.limit || 20;
-      const offset = data.offset || 0;
+      const channelName = `call_${userId}_${Date.now()}`;
 
-      const calls = await Call.find({
-        $or: [{ callerId: userId }, { calleeId: userId }],
-      })
-        .sort({ createdAt: -1 })
-        .skip(offset)
-        .limit(limit)
-        .populate("callerId", "name avatar email")
-        .populate("calleeId", "name avatar email")
-        .populate("conversationId", "name avatar");
-
-      const total = await Call.countDocuments({
-        $or: [{ callerId: userId }, { calleeId: userId }],
-      });
-
-      callback({
-        success: true,
-        data: calls,
-        total,
-      });
-    } catch (error) {
-      console.error("[DEBUG] Call: Error getting call history:", error);
-      callback({
-        success: false,
-        msg: "Failed to get call history",
-      });
-    }
-  });
-
-  // Initiate a call
-  socket.on("initiateCall", async (data: {
-    calleeId: string;
-    type: "audio" | "video";
-    conversationId?: string;
-  }, callback) => {
-    try {
-      console.log("[DEBUG] Call: Initiating call from", userId, "to", data.calleeId);
-
-      // Check if callee is online
-      const calleeSocketIds = io.sockets.adapter.rooms.get(data.calleeId);
-      const isCalleeOnline = calleeSocketIds && calleeSocketIds.size > 0;
-
-      // Create call record
-      const call = new Call({
+      const call = await Call.create({
         callerId: userId,
-        calleeId: data.calleeId,
-        conversationId: data.conversationId ? new mongoose.Types.ObjectId(data.conversationId) : undefined,
-        type: data.type,
-        status: isCalleeOnline ? "ringing" : "initiated",
-      });
-      await call.save();
-
-      // Store active call
-      activeCalls.set(call._id.toString(), {
-        callId: call._id.toString(),
-        callerId: userId,
-        calleeId: data.calleeId,
-        type: data.type,
-      });
-
-      // Notify callee
-      io.to(data.calleeId).emit("incomingCall", {
-        callId: call._id.toString(),
-        callerId: userId,
-        type: data.type,
+        receiverId: data.receiverId,
         conversationId: data.conversationId,
-        timestamp: new Date(),
+        type: data.callType,
+        status: 'missed',
+        agoraChannel: channelName,
       });
 
-      // Notify caller about the status
-      callback({
-        success: true,
-        callId: call._id.toString(),
-        status: call.status,
-        iceServers: ICE_SERVERS,
-      });
+      // Find receiver socket
+      const allSockets = Array.from(io.sockets.sockets.values());
+      const receiverSockets = allSockets.filter(
+        (s) => (s as any).userId === data.receiverId
+      );
 
-      // If callee is not online, mark as missed after a timeout
-      if (!isCalleeOnline) {
-        setTimeout(async () => {
-          const activeCall = activeCalls.get(call._id.toString());
-          if (activeCall) {
-            call.status = "missed";
-            await call.save();
-            activeCalls.delete(call._id.toString());
-            
-            // Notify caller
-            io.to(userId).emit("callStatusChanged", {
-              callId: call._id.toString(),
-              status: "missed",
-            });
-          }
-        }, 30000); // 30 seconds timeout
+      if (receiverSockets.length === 0) {
+        await Call.findByIdAndUpdate(call._id, { status: 'missed' });
+        socket.emit('callResponse', {
+          success: false,
+          msg: 'User is offline',
+        });
+        return;
       }
-    } catch (error) {
-      console.error("[DEBUG] Call: Error initiating call:", error);
-      callback({
-        success: false,
-        msg: "Failed to initiate call",
+
+      // Notify receiver
+      receiverSockets.forEach((s) => {
+        s.emit('incomingCall', {
+          callId: call._id,
+          callerId: userId,
+          callerName: data.callerName,
+          callerAvatar: data.callerAvatar,
+          callType: data.callType,
+          channelName,
+          conversationId: data.conversationId,
+        });
       });
+
+      // Tell caller to join Agora
+      socket.emit('callInitiated', {
+        success: true,
+        callId: call._id,
+        channelName,
+      });
+    } catch (err: any) {
+      socket.emit('callResponse', { success: false, msg: err.message });
     }
   });
 
-  // Accept a call
-  socket.on("acceptCall", async (data: { callId: string }, callback) => {
+  // ─── ANSWER CALL ──────────────────────────────────
+  socket.on('answerCall', async (data: {
+    callId: string;
+    callerId: string;
+  }) => {
     try {
-      console.log("[DEBUG] Call: Accepting call", data.callId);
+      const call = await Call.findByIdAndUpdate(
+        data.callId,
+        { status: 'completed', startedAt: new Date() },
+        { new: true }
+      );
 
+      const allSockets = Array.from(io.sockets.sockets.values());
+      allSockets
+        .filter((s) => (s as any).userId === data.callerId)
+        .forEach((s) => {
+          s.emit('callAnswered', {
+            success: true,
+            callId: data.callId,
+            channelName: call?.agoraChannel,
+          });
+        });
+    } catch (err: any) {
+      console.error('[Call] answerCall error:', err);
+    }
+  });
+
+  // ─── DECLINE CALL ─────────────────────────────────
+  socket.on('declineCall', async (data: {
+    callId: string;
+    callerId: string;
+  }) => {
+    try {
+      await Call.findByIdAndUpdate(data.callId, { status: 'declined' });
+
+      const allSockets = Array.from(io.sockets.sockets.values());
+      allSockets
+        .filter((s) => (s as any).userId === data.callerId)
+        .forEach((s) => s.emit('callDeclined', { callId: data.callId }));
+    } catch (err: any) {
+      console.error('[Call] declineCall error:', err);
+    }
+  });
+
+  // ─── END CALL ─────────────────────────────────────
+  socket.on('endCall', async (data: {
+    callId: string;
+    otherUserId: string;
+  }) => {
+    try {
       const call = await Call.findById(data.callId);
-      if (!call) {
-        return callback({
-          success: false,
-          msg: "Call not found",
-        });
-      }
+      if (!call) return;
 
-      // Update call status
-      call.status = "connected";
-      call.startTime = new Date();
-      await call.save();
+      const duration = call.startedAt
+        ? Math.floor((Date.now() - new Date(call.startedAt).getTime()) / 1000)
+        : 0;
 
-      // Notify caller
-      io.to(call.callerId.toString()).emit("callAccepted", {
-        callId: call._id.toString(),
-        calleeId: userId,
-        iceServers: ICE_SERVERS,
+      await Call.findByIdAndUpdate(data.callId, {
+        endedAt: new Date(),
+        duration,
       });
 
-      callback({
-        success: true,
-        callId: call._id.toString(),
-        iceServers: ICE_SERVERS,
-      });
-    } catch (error) {
-      console.error("[DEBUG] Call: Error accepting call:", error);
-      callback({
-        success: false,
-        msg: "Failed to accept call",
-      });
+      const allSockets = Array.from(io.sockets.sockets.values());
+      allSockets
+        .filter((s) => (s as any).userId === data.otherUserId)
+        .forEach((s) => s.emit('callEnded', { callId: data.callId, duration }));
+    } catch (err: any) {
+      console.error('[Call] endCall error:', err);
     }
   });
-
-  // Decline a call
-  socket.on("declineCall", async (data: { callId: string }, callback) => {
-    try {
-      console.log("[DEBUG] Call: Declining call", data.callId);
-
-      const call = await Call.findById(data.callId);
-      if (!call) {
-        return callback({
-          success: false,
-          msg: "Call not found",
-        });
-      }
-
-      // Update call status
-      call.status = "declined";
-      await call.save();
-
-      // Remove from active calls
-      activeCalls.delete(data.callId);
-
-      // Notify caller
-      io.to(call.callerId.toString()).emit("callDeclined", {
-        callId: call._id.toString(),
-        declinedBy: userId,
-      });
-
-      callback({
-        success: true,
-      });
-    } catch (error) {
-      console.error("[DEBUG] Call: Error declining call:", error);
-      callback({
-        success: false,
-        msg: "Failed to decline call",
-      });
-    }
-  });
-
-  // End a call
-  socket.on("endCall", async (data: { callId: string }, callback) => {
-    try {
-      console.log("[DEBUG] Call: Ending call", data.callId);
-
-      const call = await Call.findById(data.callId);
-      if (!call) {
-        return callback({
-          success: false,
-          msg: "Call not found",
-        });
-      }
-
-      // Calculate duration
-      if (call.startTime) {
-        call.duration = Math.floor((new Date().getTime() - call.startTime.getTime()) / 1000);
-      }
-      call.status = "ended";
-      call.endTime = new Date();
-      await call.save();
-
-      // Remove from active calls
-      activeCalls.delete(data.callId);
-
-      // Notify the other party
-      const otherUserId = call.callerId.toString() === userId
-        ? call.calleeId.toString()
-        : call.callerId.toString();
-      
-      io.to(otherUserId).emit("callEnded", {
-        callId: call._id.toString(),
-        endedBy: userId,
-        duration: call.duration,
-      });
-
-      callback({
-        success: true,
-        duration: call.duration,
-      });
-    } catch (error) {
-      console.error("[DEBUG] Call: Error ending call:", error);
-      callback({
-        success: false,
-        msg: "Failed to end call",
-      });
-    }
-  });
-
-  // WebRTC signaling: Offer
-  socket.on("callOffer", async (data: {
-    callId: string;
-    offer: RTCSessionDescriptionInit;
-    targetUserId: string;
-  }) => {
-    console.log("[DEBUG] Call: Sending offer for call", data.callId);
-    
-    io.to(data.targetUserId).emit("callOffer", {
-      callId: data.callId,
-      offer: data.offer,
-      from: userId,
-    });
-  });
-
-  // WebRTC signaling: Answer
-  socket.on("callAnswer", async (data: {
-    callId: string;
-    answer: RTCSessionDescriptionInit;
-    targetUserId: string;
-  }) => {
-    console.log("[DEBUG] Call: Sending answer for call", data.callId);
-    
-    io.to(data.targetUserId).emit("callAnswer", {
-      callId: data.callId,
-      answer: data.answer,
-      from: userId,
-    });
-  });
-
-  // WebRTC signaling: ICE Candidate
-  socket.on("callIceCandidate", async (data: {
-    callId: string;
-    candidate: RTCIceCandidateInit;
-    targetUserId: string;
-  }) => {
-    console.log("[DEBUG] Call: Sending ICE candidate for call", data.callId);
-    
-    io.to(data.targetUserId).emit("callIceCandidate", {
-      callId: data.callId,
-      candidate: data.candidate,
-      from: userId,
-    });
-  });
-
-  // Toggle media (mute/unmute, camera on/off)
-  socket.on("toggleMedia", async (data: {
-    callId: string;
-    type: "audio" | "video";
-    enabled: boolean;
-    targetUserId: string;
-  }) => {
-    console.log("[DEBUG] Call: Toggling media", data.type, "to", data.enabled);
-    
-    io.to(data.targetUserId).emit("mediaToggled", {
-      callId: data.callId,
-      type: data.type,
-      enabled: data.enabled,
-      from: userId,
-    });
-  });
-
-  // Handle reconnection - rejoin call if in active call
-  socket.on("rejoinCall", async (data: { callId: string }, callback) => {
-    try {
-      const activeCall = activeCalls.get(data.callId);
-      if (!activeCall) {
-        return callback({
-          success: false,
-          msg: "Call not found or already ended",
-        });
-      }
-
-      // Verify user is part of this call
-      if (activeCall.callerId !== userId && activeCall.calleeId !== userId) {
-        return callback({
-          success: false,
-          msg: "Not authorized to rejoin this call",
-        });
-      }
-
-      callback({
-        success: true,
-        call: activeCall,
-        iceServers: ICE_SERVERS,
-      });
-    } catch (error) {
-      console.error("[DEBUG] Call: Error rejoining call:", error);
-      callback({
-        success: false,
-        msg: "Failed to rejoin call",
-      });
-    }
-  });
-
-  // Handle user going offline during a call
-  socket.on("disconnect", async () => {
-    console.log("[DEBUG] Call: User disconnected", userId);
-    
-    // Find and end any active calls for this user
-    for (const [callId, activeCall] of activeCalls) {
-      if (activeCall.callerId === userId || activeCall.calleeId === userId) {
-        try {
-          const call = await Call.findById(callId);
-          if (call && call.status === "connected") {
-            call.status = "ended";
-            if (call.startTime) {
-              call.duration = Math.floor((new Date().getTime() - call.startTime.getTime()) / 1000);
-            }
-            call.endTime = new Date();
-            await call.save();
-
-            // Notify the other party
-            const otherUserId = call.callerId.toString() === userId
-              ? call.calleeId.toString()
-              : call.callerId.toString();
-            
-            io.to(otherUserId).emit("callEnded", {
-              callId: call._id.toString(),
-              endedBy: userId,
-              duration: call.duration,
-            });
-          }
-          activeCalls.delete(callId);
-        } catch (error) {
-          console.error("[DEBUG] Call: Error ending call on disconnect:", error);
-        }
-      }
-    }
-  });
-
-  console.log("[DEBUG] Call events registered for user:", userId);
-};
+}

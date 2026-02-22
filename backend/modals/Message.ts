@@ -14,6 +14,10 @@ const messageSchema = new mongoose.Schema(
     },
     content: String,
     attachment: String,
+    readBy: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    }],
   },
   {
     timestamps: true,

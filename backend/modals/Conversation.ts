@@ -28,6 +28,11 @@ const ConversationSchema = new Schema<ConversationProps>(
       type: String,
       default: "",
     },
+    unreadCount: {
+      type: Map,
+      of: Number,
+      default: {},
+    },
   },
   {
     timestamps: true,

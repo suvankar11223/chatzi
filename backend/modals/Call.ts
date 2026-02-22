@@ -2,13 +2,14 @@ import mongoose, { Document, Schema } from "mongoose";
 
 export interface ICall extends Document {
   callerId: mongoose.Types.ObjectId;
-  calleeId: mongoose.Types.ObjectId;
+  receiverId: mongoose.Types.ObjectId;
   conversationId?: mongoose.Types.ObjectId;
-  type: "audio" | "video";
-  status: "initiated" | "ringing" | "connected" | "ended" | "missed" | "declined";
-  startTime?: Date;
-  endTime?: Date;
+  type: "voice" | "video";
+  status: "missed" | "declined" | "completed";
+  startedAt?: Date;
+  endedAt?: Date;
   duration?: number; // in seconds
+  agoraChannel: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -20,7 +21,7 @@ const callSchema = new Schema<ICall>(
       ref: "User",
       required: true,
     },
-    calleeId: {
+    receiverId: {
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
@@ -31,23 +32,23 @@ const callSchema = new Schema<ICall>(
     },
     type: {
       type: String,
-      enum: ["audio", "video"],
-      default: "video",
+      enum: ["voice", "video"],
+      required: true,
     },
     status: {
       type: String,
-      enum: ["initiated", "ringing", "connected", "ended", "missed", "declined"],
-      default: "initiated",
+      enum: ["missed", "declined", "completed"],
+      default: "missed",
     },
-    startTime: {
-      type: Date,
-    },
-    endTime: {
-      type: Date,
-    },
+    startedAt: Date,
+    endedAt: Date,
     duration: {
       type: Number,
       default: 0,
+    },
+    agoraChannel: {
+      type: String,
+      required: true,
     },
   },
   {

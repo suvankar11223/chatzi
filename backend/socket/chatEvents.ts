@@ -2,12 +2,20 @@ import { Server as SocketIOServer, Socket } from "socket.io";
 import Conversation from "../modals/Conversation";
 import Message from "../modals/Message";
 
+// Debug logging helper
+const logDebug = (message: string, ...args: any[]) => {
+  console.log(`[ChatEvents:${new Date().toISOString()}]`, message, ...args);
+};
+
 export function registerChatEvents(io: SocketIOServer, socket: Socket) {
   socket.on("getConversations", async () => {
-    console.log('getConversations event');
+    logDebug('=== getConversations EVENT ===');
     try {
       const userId = (socket as any).userId;
+      logDebug('User ID:', userId);
+      
       if (!userId) {
+        logDebug('ERROR: No userId found on socket');
         socket.emit("getConversations", {
           success: false,
           msg: "Unauthorized",
@@ -29,14 +37,23 @@ export function registerChatEvents(io: SocketIOServer, socket: Socket) {
       })
       .lean();
 
+      logDebug(`Found ${conversations.length} conversations`);
+
+      // Add unread count for each conversation
+      const conversationsWithUnread = conversations.map((conv: any) => ({
+        ...conv,
+        unreadCount: conv.unreadCount?.get(userId.toString()) || 0,
+      }));
+
       socket.emit("getConversations", {
         success: true,
-        data: conversations,
+        data: conversationsWithUnread,
       });
 
-      console.log(`[DEBUG] Socket: Sent ${conversations.length} conversations to user ${userId}`);
+      logDebug(`Socket: Sent ${conversations.length} conversations to user ${userId}`);
+      logDebug('=== getConversations COMPLETED ===');
     } catch (error: any) {
-      console.log("getConversations error: ", error);
+      logDebug('getConversations ERROR:', error.message);
       socket.emit("getConversations", {
         success: false,
         msg: "Failed to fetch conversations",
@@ -189,7 +206,8 @@ export function registerChatEvents(io: SocketIOServer, socket: Socket) {
         conversationId: data.conversationId,
         senderId: data.sender.id,
         content: data.content || '',
-        attachment: data.attachment || null
+        attachment: data.attachment || null,
+        readBy: [data.sender.id], // Sender has read their own message
       });
 
       console.log('✓ Message saved:', message._id);
@@ -214,10 +232,26 @@ export function registerChatEvents(io: SocketIOServer, socket: Socket) {
       io.to(data.conversationId).emit("newMessage", messageData);
       console.log('✓ Emitted to room:', data.conversationId);
 
-      // Update conversation's lastMessage in background (don't wait)
-      Conversation.findByIdAndUpdate(data.conversationId, {
-        lastMessage: message._id,
-        updatedAt: new Date(),
+      // Update conversation's lastMessage and increment unread counts in background
+      Conversation.findById(data.conversationId).then(async (conversation) => {
+        if (!conversation) return;
+
+        // Increment unread count for all participants except sender
+        const unreadCount = conversation.unreadCount || new Map();
+        conversation.participants.forEach((participantId: any) => {
+          const participantIdStr = participantId.toString();
+          if (participantIdStr !== data.sender.id) {
+            const currentCount = unreadCount.get(participantIdStr) || 0;
+            unreadCount.set(participantIdStr, currentCount + 1);
+          }
+        });
+
+        conversation.lastMessage = message._id as any;
+        conversation.unreadCount = unreadCount;
+        conversation.updatedAt = new Date();
+        await conversation.save();
+
+        console.log('✓ Updated conversation with unread counts');
       }).catch(err => console.error('Error updating conversation:', err));
 
       console.log('=== MESSAGE SENT ===');
@@ -293,5 +327,61 @@ export function registerChatEvents(io: SocketIOServer, socket: Socket) {
     
     socket.emit("conversationJoined", { conversationId });
     console.log("=== JOIN CONVERSATION COMPLETED ===");
+  });
+
+  socket.on("markAsRead", async (data: { conversationId: string }) => {
+    console.log("=== MARK AS READ EVENT ===");
+    console.log("User:", (socket as any).userEmail);
+    console.log("Conversation ID:", data.conversationId);
+    
+    try {
+      const userId = (socket as any).userId;
+      if (!userId) {
+        socket.emit("markAsRead", {
+          success: false,
+          msg: "Unauthorized",
+        });
+        return;
+      }
+
+      // Reset unread count for this user in this conversation
+      const conversation = await Conversation.findById(data.conversationId);
+      if (!conversation) {
+        throw new Error("Conversation not found");
+      }
+
+      const unreadCount = conversation.unreadCount || new Map();
+      unreadCount.set(userId.toString(), 0);
+      conversation.unreadCount = unreadCount;
+      await conversation.save();
+
+      // Mark all messages in this conversation as read by this user
+      await Message.updateMany(
+        {
+          conversationId: data.conversationId,
+          senderId: { $ne: userId },
+          readBy: { $ne: userId },
+        },
+        {
+          $addToSet: { readBy: userId },
+        }
+      );
+
+      socket.emit("markAsRead", {
+        success: true,
+        data: { conversationId: data.conversationId },
+      });
+
+      console.log("✓ Marked conversation as read for user");
+      console.log("=== MARK AS READ COMPLETED ===");
+
+    } catch (error: any) {
+      console.log("=== MARK AS READ ERROR ===");
+      console.log(error.message);
+      socket.emit("markAsRead", {
+        success: false,
+        msg: "Failed to mark as read: " + error.message,
+      });
+    }
   });
 }

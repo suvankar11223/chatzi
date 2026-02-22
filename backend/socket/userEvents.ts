@@ -1,9 +1,14 @@
 import { Socket, Server as SocketIOServer } from "socket.io";
 
+// Debug logging helper
+const logDebug = (message: string, ...args: any[]) => {
+  console.log(`[Socket:${new Date().toISOString()}]`, message, ...args);
+};
+
 export const registerUserEvents = (io: SocketIOServer, socket: Socket): void => {
   // Test socket event
   socket.on("testSocket", (data) => {
-    console.log("[DEBUG] Socket: testSocket event received:", data);
+    logDebug("testSocket event received:", data);
     socket.emit("testSocket", { msg: "its working!!!" });
   });
 
@@ -151,13 +156,13 @@ export const registerUserEvents = (io: SocketIOServer, socket: Socket): void => 
 
   // Get contacts
   socket.on("getContacts", async () => {
-    console.log('=== GET CONTACTS EVENT ===');
+    logDebug('=== GET CONTACTS EVENT ===');
     try {
       const currentUserId = (socket as any).userId;
-      console.log('Current user ID:', currentUserId);
+      logDebug('Current user ID:', currentUserId);
       
       if (!currentUserId) {
-        console.log('ERROR: No userId found on socket');
+        logDebug('ERROR: No userId found on socket');
         socket.emit("getContacts", {
           success: false,
           msg: "Unauthorized",
@@ -171,19 +176,21 @@ export const registerUserEvents = (io: SocketIOServer, socket: Socket): void => 
         { password: 0 } // exclude password field
       ).lean(); // will fetch js object
 
-      console.log(`Found ${users.length} contacts (excluding current user)`);
-      console.log('Contact names:', users.map(u => u.name).join(', '));
+      logDebug(`Found ${users.length} contacts (excluding current user)`);
+      if (users.length > 0) {
+        logDebug('Contact names:', users.map(u => u.name).join(', '));
+      }
 
       socket.emit("getContacts", {
         success: true,
         data: users,
       });
 
-      console.log(`[DEBUG] Socket: Sent ${users.length} contacts to user ${currentUserId}`);
-      console.log('=== GET CONTACTS COMPLETED ===');
+      logDebug(`Socket: Sent ${users.length} contacts to user ${currentUserId}`);
+      logDebug('=== GET CONTACTS COMPLETED ===');
     } catch (error: any) {
-      console.log("=== GET CONTACTS ERROR ===");
-      console.log("getContacts error: ", error);
+      logDebug('=== GET CONTACTS ERROR ===');
+      logDebug("getContacts error: ", error.message);
       socket.emit("getContacts", {
         success: false,
         msg: "Failed to fetch contacts",

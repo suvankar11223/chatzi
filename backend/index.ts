@@ -38,7 +38,22 @@ const getLocalIP = () => {
   return 'localhost';
 };
 
-// Health check endpoint
+// Health check endpoints
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ success: true, status: 'ok', timestamp: Date.now() });
+});
+
+// Test connection endpoint - returns server info
+app.get('/api/test-connection', (_req, res) => {
+  res.status(200).json({ 
+    success: true, 
+    message: 'Server is running and reachable!',
+    timestamp: Date.now(),
+    url: `http://localhost:${PORT}`
+  });
+});
+
+// Health check endpoint (root)
 app.get('/', (_req, res) => {
   res.send('Server is running');
 });
@@ -71,7 +86,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   res.status(500).json({ success: false, msg: "Internal server error" });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const server = http.createServer(app);
 
 // Initialize Socket.IO
@@ -83,20 +98,28 @@ const startServer = async () => {
     await connectDB();
     
     // Listen on all network interfaces (0.0.0.0) to allow connections from other devices
-    server.listen(PORT, () => {
+    server.listen(PORT, '0.0.0.0', () => {
+      const localIP = getLocalIP();
       console.log('='.repeat(60));
       console.log('SERVER STARTED SUCCESSFULLY');
       console.log('='.repeat(60));
-      console.log('Server is running on Port', PORT);
-      console.log('[DEBUG] Auth routes mounted at /api/auth');
-      console.log('[DEBUG] User routes mounted at /api/user');
-      console.log('[DEBUG] Socket.IO ready for connections');
-      console.log('[DEBUG] Server accessible at:');
-      console.log(`  - http://localhost:${PORT}`);
-      console.log(`  - http://127.0.0.1:${PORT}`);
-      console.log(`  - http://172.25.251.53:${PORT} (for physical devices on same network)`);
-      console.log('='.repeat(60));
-      console.log('IMPORTANT: Make sure your phone and computer are on the SAME WiFi network!');
+      console.log(`✅ Server listening on 0.0.0.0:${PORT}`);
+      console.log('');
+      console.log('📱 Access from:');
+      console.log(`   Local:   http://localhost:${PORT}`);
+      console.log(`   Network: http://${localIP}:${PORT}`);
+      console.log('');
+      console.log('🔌 Endpoints:');
+      console.log(`   Health:  http://${localIP}:${PORT}/api/health`);
+      console.log(`   Auth:    http://${localIP}:${PORT}/api/auth`);
+      console.log(`   Users:   http://${localIP}:${PORT}/api/user`);
+      console.log('');
+      console.log('🔄 Socket.IO ready for connections');
+      console.log('');
+      console.log('⚠️  IMPORTANT:');
+      console.log('   - Phone and computer MUST be on SAME WiFi network');
+      console.log(`   - Update frontend IP to: ${localIP}`);
+      console.log('   - File: frontend/utils/network.ts (line 5)');
       console.log('='.repeat(60));
     });
   } catch (err) {

@@ -9,6 +9,9 @@ import Conversation from '../modals/Conversation';
 
 dotenv.config();
 
+// Track online users globally
+const onlineUsers = new Map<string, string>(); // userId → socketId
+
 export const initializeSocket = (server: Server): SocketIOServer => {
   const io = new SocketIOServer(server, {
     cors: {
@@ -16,8 +19,12 @@ export const initializeSocket = (server: Server): SocketIOServer => {
       methods: ["GET", "POST"],
       credentials: true,
     },
-    transports: ['websocket', 'polling'], // Try websocket first
-    allowEIO3: true, // Allow Engine.IO v3 clients
+    transports: ['websocket', 'polling'], // WebSocket first for HTTPS
+    allowEIO3: true,
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    upgradeTimeout: 30000,
+    maxHttpBufferSize: 1e6, // 1MB
   });
 
   // Authentication middleware
@@ -51,6 +58,24 @@ export const initializeSocket = (server: Server): SocketIOServer => {
     
     console.log(`[DEBUG] Socket: User connected - ${userEmail} (${socket.id})`);
 
+    // Mark user as ONLINE
+    if (userId) {
+      onlineUsers.set(userId, socket.id);
+      
+      // Broadcast to everyone that this user is online
+      socket.broadcast.emit('userOnline', { userId });
+      
+      console.log(`[Online] User ${userId} is now ONLINE. Total online: ${onlineUsers.size}`);
+    }
+
+    // Send the current online users list to the newly connected user
+    socket.emit('onlineUsers', {
+      success: true,
+      data: Array.from(onlineUsers.keys()),
+    });
+    
+    console.log(`[Online] Sent online users list to ${userId}:`, Array.from(onlineUsers.keys()));
+
     // Join user to their own personal room for direct messaging
     socket.join(userId);
 
@@ -78,6 +103,16 @@ export const initializeSocket = (server: Server): SocketIOServer => {
     // Handle disconnection
     socket.on('disconnect', () => {
       console.log(`[DEBUG] Socket: User disconnected - ${userEmail} (${socket.id})`);
+      
+      // Mark user as OFFLINE
+      if (userId) {
+        onlineUsers.delete(userId);
+        
+        // Broadcast to everyone that this user is offline
+        socket.broadcast.emit('userOffline', { userId });
+        
+        console.log(`[Online] User ${userId} is now OFFLINE. Total online: ${onlineUsers.size}`);
+      }
       
       // Broadcast user offline status
       io.emit("userStatusChanged", {

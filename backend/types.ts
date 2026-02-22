@@ -16,6 +16,7 @@ export interface ConversationProps extends Document {
   lastMessage?: Types.ObjectId;
   createdBy?: Types.ObjectId;
   avatar?: string;
+  unreadCount?: Map<string, number>;
   createdAt: Date;
   updatedAt: Date;
 }

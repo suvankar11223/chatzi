@@ -8,7 +8,8 @@
     "dev": "tsx watch index.ts",
     "start": "tsx index.ts",
     "build": "echo 'No build needed - using tsx'",
-    "seed": "tsx seed.ts"
+    "seed": "tsx seed.ts",
+    "check-users": "tsx check-users.ts"
   },
   "keywords": [],
   "author": "",
