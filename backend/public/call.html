@@ -4,238 +4,418 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Chatzi Call</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { 
-      background: #0f0f1a; 
-      width: 100vw; 
-      height: 100vh; 
-      overflow: hidden; 
-      font-family: sans-serif; 
+    :root {
+      --bg: #0a0a0f;
+      --surface: rgba(255,255,255,0.05);
+      --border: rgba(255,255,255,0.08);
+      --accent: #6366f1;
+      --accent-dim: rgba(99,102,241,0.15);
+      --danger: #ef4444;
+      --green: #22c55e;
+      --text: #f1f5f9;
+      --text-dim: rgba(241,245,249,0.45);
     }
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      background: var(--bg);
+      width: 100vw; height: 100vh;
+      overflow: hidden;
+      font-family: 'DM Sans', sans-serif;
+      color: var(--text);
+    }
+    /* Ambient glow */
+    #ambientGlow {
+      position: absolute;
+      inset: -20%;
+      background: radial-gradient(ellipse at 50% 40%, rgba(99,102,241,0.10) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    /* Video layout */
     #videos {
       position: relative;
-      width: 100%;
-      height: 100%;
+      width: 100%; height: 100%;
+      z-index: 1;
     }
     #remoteVideo {
-      width: 100%;
-      height: 100%;
+      width: 100%; height: 100%;
       object-fit: cover;
-      background: #1a1a2e;
+      background: #0d0d1a;
+      display: block;
     }
+    /* Local video */
+    #localWrapper {
+      position: absolute;
+      top: 20px; right: 16px;
+      width: 100px; height: 148px;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1.5px solid var(--border);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
+      z-index: 10;
+      background: #111;
+      transition: transform 0.2s ease;
+      cursor: pointer;
+    }
+    #localWrapper:active { transform: scale(0.95); }
     #localVideo {
-      position: absolute;
-      top: 20px;
-      right: 16px;
-      width: 110px;
-      height: 160px;
+      width: 100%; height: 100%;
       object-fit: cover;
-      border-radius: 12px;
-      border: 2px solid rgba(255,255,255,0.3);
-      background: #16213e;
+      transform: scaleX(-1);
     }
-    #status {
+    #camOffLocal {
+      display: none;
       position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      color: rgba(255,255,255,0.8);
-      font-size: 18px;
-      text-align: center;
-      pointer-events: none;
+      inset: 0;
+      background: #1a1a2e;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 6px;
     }
+    #camOffLocal span { font-size: 11px; color: var(--text-dim); }
+    /* Top bar */
+    #topBar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      padding: 52px 20px 28px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%);
+      z-index: 5;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+    #callerName {
+      font-size: 19px;
+      font-weight: 600;
+      letter-spacing: -0.4px;
+      color: var(--text);
+      text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    #callStatus {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    #statusDot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: all 0.5s;
+      flex-shrink: 0;
+    }
+    #statusDot.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    #statusDot.connecting { background: #f59e0b; animation: blink 1.2s infinite; }
+    #statusLabel {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-weight: 400;
+    }
+    #callTimer {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+      display: none;
+      background: rgba(0,0,0,0.3);
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+    /* Connecting overlay */
+    #statusOverlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      z-index: 4;
+      pointer-events: none;
+      transition: opacity 0.6s ease;
+    }
+    #statusOverlay.hidden { opacity: 0; }
+    #connectingRing {
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.06);
+      border-top-color: var(--accent);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #overlayText {
+      font-size: 15px;
+      color: var(--text-dim);
+      font-weight: 400;
+    }
+    /* Controls bar */
     #controls {
       position: absolute;
-      bottom: 40px;
-      left: 0; 
-      right: 0;
+      bottom: 0; left: 0; right: 0;
+      padding: 20px 28px 48px;
+      background: linear-gradient(to top, rgba(0,0,0,0.80) 0%, transparent 100%);
+      z-index: 10;
       display: flex;
+      align-items: flex-end;
       justify-content: center;
-      gap: 20px;
-      align-items: center;
+      gap: 16px;
     }
     .ctrl-btn {
-      width: 56px; 
-      height: 56px;
-      border-radius: 50%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      background: none;
       border: none;
       cursor: pointer;
+      padding: 0;
+    }
+    .btn-circle {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.10);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 22px;
-      background: rgba(255,255,255,0.15);
-      color: white;
+      transition: all 0.15s ease;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
-    .ctrl-btn.active { background: rgba(255,255,255,0.3); }
-    .ctrl-btn.end { background: #EF4444; width: 68px; height: 68px; font-size: 26px; }
+    .ctrl-btn:active .btn-circle { transform: scale(0.90); }
+    .ctrl-btn.off .btn-circle {
+      background: rgba(255,255,255,0.14);
+      border-color: rgba(255,255,255,0.18);
+    }
+    .btn-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.4);
+      letter-spacing: 0.2px;
+    }
+    /* End call */
+    .ctrl-btn.end .btn-circle {
+      width: 66px; height: 66px;
+      background: var(--danger);
+      border-color: transparent;
+      box-shadow: 0 4px 20px rgba(239,68,68,0.40);
+    }
+    .ctrl-btn.end:active .btn-circle { transform: scale(0.88); }
+    .ctrl-btn.end .btn-label { color: rgba(239,68,68,0.6); }
+    svg { display: block; }
   </style>
 </head>
 <body>
+  <div id="ambientGlow"></div>
   <div id="videos">
     <video id="remoteVideo" autoplay playsinline></video>
-    <video id="localVideo" autoplay playsinline muted></video>
-    <div id="status">Connecting...</div>
+    <div id="localWrapper">
+      <video id="localVideo" autoplay playsinline muted></video>
+      <div id="camOffLocal">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5" opacity="0.4">
+          <line x1="1" y1="1" x2="23" y2="23"/>
+          <path d="M21 21H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3m3-3h6l2 3h2a2 2 0 0 1 2 2v9.34"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        <span>Camera off</span>
+      </div>
+    </div>
   </div>
+
+  <!-- Top bar -->
+  <div id="topBar">
+    <div>
+      <div id="callerName">Connecting...</div>
+      <div id="callStatus">
+        <span id="statusDot" class="connecting"></span>
+        <span id="statusLabel">Please wait</span>
+      </div>
+    </div>
+    <div id="callTimer">0:00</div>
+  </div>
+
+  <!-- Center overlay -->
+  <div id="statusOverlay">
+    <div id="connectingRing"></div>
+    <div id="overlayText">Connecting to call...</div>
+  </div>
+
+  <!-- Controls -->
   <div id="controls">
-    <button class="ctrl-btn" id="muteBtn" onclick="toggleMute()">🎤</button>
-    <button class="ctrl-btn end" onclick="endCall()">📵</button>
-    <button class="ctrl-btn" id="camBtn" onclick="toggleCamera()">📷</button>
+    <!-- Mic button -->
+    <button class="ctrl-btn" id="muteBtn" onclick="toggleMute()">
+      <div class="btn-circle">
+        <svg id="micIcon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </div>
+      <span class="btn-label">Mute</span>
+    </button>
+
+    <!-- End call -->
+    <button class="ctrl-btn end" onclick="endCall()">
+      <div class="btn-circle">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
+          <path d="M18.36 6.64a9 9 0 0 1 0 10.72M12 2a10 10 0 0 0-7.07 17.07M2.93 2.93l18.14 18.14" stroke="white" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+          <path d="M10.68 6.41c.32-.12.66-.16 1-.12.35.04.67.17.95.37" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <span class="btn-label">End</span>
+    </button>
+
+    <!-- Camera button -->
+    <button class="ctrl-btn" id="camBtn" onclick="toggleCamera()">
+      <div class="btn-circle">
+        <svg id="camIcon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="23 7 16 12 23 17 23 7"/>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+        </svg>
+      </div>
+      <span class="btn-label">Camera</span>
+    </button>
   </div>
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script>
-    // Get params from URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const roomId = urlParams.get('roomId');
-    const userId = urlParams.get('userId');
-    const isCaller = urlParams.get('isCaller') === 'true';
-    const callType = urlParams.get('callType') || 'video';
-    const serverUrl = urlParams.get('serverUrl');
-    const token = urlParams.get('token');
+    const p = new URLSearchParams(window.location.search);
+    const roomId     = p.get('roomId');
+    const userId     = p.get('userId');
+    const isCaller   = p.get('isCaller') === 'true';
+    const callType   = p.get('callType') || 'video';
+    const serverUrl  = p.get('serverUrl');
+    const token      = p.get('token');
+    const otherName  = p.get('name') || 'User';
 
-    let localStream = null;
-    let peerConnection = null;
-    let isMuted = false;
-    let isCamOff = false;
-    let socket = null;
+    let localStream = null, peerConnection = null;
+    let isMuted = false, isCamOff = false;
+    let socket = null, timerInterval = null;
 
-    const configuration = {
+    const iceConfig = { 
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
       ]
     };
 
-    const statusEl = document.getElementById('status');
-    const remoteVideo = document.getElementById('remoteVideo');
-    const localVideo = document.getElementById('localVideo');
+    // Elements
+    const callerNameEl   = document.getElementById('callerName');
+    const statusDotEl    = document.getElementById('statusDot');
+    const statusLabelEl  = document.getElementById('statusLabel');
+    const statusOverlay  = document.getElementById('statusOverlay');
+    const callTimerEl    = document.getElementById('callTimer');
+    const remoteVideo    = document.getElementById('remoteVideo');
+    const localVideo     = document.getElementById('localVideo');
+    const camOffLocal    = document.getElementById('camOffLocal');
 
-    function setStatus(msg) {
-      statusEl.textContent = msg;
-      statusEl.style.display = msg ? 'block' : 'none';
+    callerNameEl.textContent = otherName;
+
+    // Voice call hides camera UI
+    if (callType === 'voice') {
+      document.getElementById('camBtn').style.display = 'none';
+      document.getElementById('localWrapper').style.display = 'none';
+    }
+
+    function setStatus(label, state) {
+      statusLabelEl.textContent = label;
+      statusDotEl.className = state;
+      if (state === 'connected') {
+        statusOverlay.classList.add('hidden');
+        startTimer();
+      }
+    }
+
+    function startTimer() {
+      const start = Date.now();
+      callTimerEl.style.display = 'block';
+      timerInterval = setInterval(() => {
+        const s = Math.floor((Date.now() - start) / 1000);
+        callTimerEl.textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+      }, 1000);
     }
 
     async function init() {
       try {
-        setStatus('Getting camera...');
-        
-        // Get media
-        const constraints = {
+        setStatus('Getting camera...', 'connecting');
+        localStream = await navigator.mediaDevices.getUserMedia({
           audio: true,
           video: callType === 'video' ? { facingMode: 'user' } : false,
-        };
-        
-        localStream = await navigator.mediaDevices.getUserMedia(constraints);
-        localVideo.srcObject = localStream;
-        
-        if (callType === 'voice') {
-          localVideo.style.display = 'none';
-        }
-
-        setStatus('Connecting to server...');
-        
-        // Connect to your socket server with auth token
-        socket = io(serverUrl, {
-          auth: { token },
-          transports: ['polling', 'websocket'],
         });
+        localVideo.srcObject = localStream;
+
+        setStatus('Connecting...', 'connecting');
+        socket = io(serverUrl, { auth: { token }, transports: ['polling', 'websocket'] });
 
         socket.on('connect', () => {
-          console.log('Socket connected');
-          setStatus('Waiting for other person...');
+          setStatus('Waiting for other person...', 'connecting');
           socket.emit('joinCallRoom', { roomId, userId });
         });
 
-        socket.on('connect_error', (err) => {
-          setStatus('Connection error: ' + err.message);
-        });
+        socket.on('connect_error', () => setStatus('Connection failed', ''));
 
-        // WebRTC signaling events
         socket.on('callRoomReady', async () => {
-          console.log('Room ready, isCaller:', isCaller);
-          if (isCaller) {
-            await createOffer();
-          }
+          if (isCaller) { setStatus('Calling...', 'connecting'); await createOffer(); }
+          else setStatus('Connecting...', 'connecting');
         });
 
-        socket.on('webrtcOffer', async ({ offer }) => {
-          console.log('Received offer');
-          await createAnswer(offer);
-        });
-
+        socket.on('webrtcOffer',  async ({ offer })  => await createAnswer(offer));
         socket.on('webrtcAnswer', async ({ answer }) => {
-          console.log('Received answer');
-          if (peerConnection) {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-          }
+          if (peerConnection) await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
         });
 
         socket.on('webrtcIce', async ({ candidate }) => {
-          console.log('Received ICE candidate');
           if (peerConnection && candidate) {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            try { await peerConnection.addIceCandidate(new RTCIceCandidate(candidate)); } catch(e){}
           }
         });
 
         socket.on('callEnded', () => {
-          setStatus('Call ended');
           cleanup();
           window.ReactNativeWebView?.postMessage(JSON.stringify({ type: 'callEnded' }));
         });
 
       } catch (err) {
-        console.error('Init error:', err);
-        setStatus('Error: ' + err.message);
+        setStatus('Error: ' + err.message, '');
       }
     }
 
-    function createPeerConnection() {
-      peerConnection = new RTCPeerConnection(configuration);
+    function buildPC() {
+      peerConnection = new RTCPeerConnection(iceConfig);
+      localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
 
-      // Add local tracks
-      localStream.getTracks().forEach(track => {
-        peerConnection.addTrack(track, localStream);
-      });
-
-      // Receive remote stream
-      peerConnection.ontrack = (event) => {
-        console.log('Got remote track');
-        remoteVideo.srcObject = event.streams[0];
-        setStatus('');
+      peerConnection.ontrack = e => {
+        remoteVideo.srcObject = e.streams[0];
+        setStatus('Connected', 'connected');
       };
 
-      // Send ICE candidates
-      peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket.emit('webrtcIce', { roomId, candidate: event.candidate });
-        }
+      peerConnection.onicecandidate = e => {
+        if (e.candidate) socket.emit('webrtcIce', { roomId, candidate: e.candidate });
       };
 
       peerConnection.onconnectionstatechange = () => {
-        console.log('Connection state:', peerConnection.connectionState);
-        if (peerConnection.connectionState === 'connected') {
-          setStatus('');
-        } else if (peerConnection.connectionState === 'failed') {
-          setStatus('Connection failed. Please try again.');
-        }
+        const s = peerConnection.connectionState;
+        if (s === 'connected') setStatus('Connected', 'connected');
+        else if (s === 'disconnected') setStatus('Reconnecting...', 'connecting');
+        else if (s === 'failed') setStatus('Connection lost', '');
       };
-
-      return peerConnection;
     }
 
     async function createOffer() {
-      setStatus('Calling...');
-      createPeerConnection();
+      buildPC();
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
       socket.emit('webrtcOffer', { roomId, offer });
     }
 
     async function createAnswer(offer) {
-      setStatus('Connecting...');
-      createPeerConnection();
+      buildPC();
       await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
@@ -243,34 +423,42 @@
     }
 
     function toggleMute() {
-      if (!localStream) return;
       isMuted = !isMuted;
-      localStream.getAudioTracks().forEach(t => t.enabled = !isMuted);
-      document.getElementById('muteBtn').textContent = isMuted ? '🔇' : '🎤';
-      document.getElementById('muteBtn').classList.toggle('active', isMuted);
+      localStream?.getAudioTracks().forEach(t => t.enabled = !isMuted);
+      const btn = document.getElementById('muteBtn');
+      btn.classList.toggle('off', isMuted);
+      btn.querySelector('.btn-label').textContent = isMuted ? 'Unmute' : 'Mute';
+      document.getElementById('micIcon').innerHTML = isMuted
+        ? `<line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>`
+        : `<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>`;
     }
 
     function toggleCamera() {
-      if (!localStream || callType !== 'video') return;
+      if (callType !== 'video') return;
       isCamOff = !isCamOff;
-      localStream.getVideoTracks().forEach(t => t.enabled = !isCamOff);
-      document.getElementById('camBtn').textContent = isCamOff ? '📵' : '📷';
-      document.getElementById('camBtn').classList.toggle('active', isCamOff);
+      localStream?.getVideoTracks().forEach(t => t.enabled = !isCamOff);
+      const btn = document.getElementById('camBtn');
+      btn.classList.toggle('off', isCamOff);
+      btn.querySelector('.btn-label').textContent = isCamOff ? 'Show Cam' : 'Camera';
+      camOffLocal.style.display = isCamOff ? 'flex' : 'none';
+      document.getElementById('camIcon').innerHTML = isCamOff
+        ? `<line x1="1" y1="1" x2="23" y2="23"/><path d="M21 21H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3m3-3h6l2 3h2a2 2 0 0 1 2 2v9.34"/><circle cx="12" cy="13" r="4"/>`
+        : `<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>`;
     }
 
     function endCall() {
-      if (socket) socket.emit('endCallRoom', { roomId });
+      socket?.emit('endCallRoom', { roomId });
       cleanup();
       window.ReactNativeWebView?.postMessage(JSON.stringify({ type: 'endCall' }));
     }
 
     function cleanup() {
-      if (localStream) localStream.getTracks().forEach(t => t.stop());
-      if (peerConnection) peerConnection.close();
-      if (socket) socket.disconnect();
+      clearInterval(timerInterval);
+      localStream?.getTracks().forEach(t => t.stop());
+      peerConnection?.close();
+      socket?.disconnect();
     }
 
-    // Start
     init();
   </script>
 </body>

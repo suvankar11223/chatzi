@@ -47,6 +47,7 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
 
       // Notify receiver
       receiverSockets.forEach((s) => {
+        console.log('[Call] Sending incomingCall to receiver:', receiverId);
         s.emit('incomingCall', {
           callId: call._id,
           callerId: userId,
