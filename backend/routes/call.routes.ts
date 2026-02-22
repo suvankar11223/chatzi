@@ -11,17 +11,17 @@ router.get("/history", authenticateToken, async (req, res) => {
     const { limit = "20", offset = "0" } = req.query;
 
     const calls = await Call.find({
-      $or: [{ callerId: userId }, { calleeId: userId }],
+      $or: [{ callerId: userId }, { receiverId: userId }],
     })
       .sort({ createdAt: -1 })
       .skip(Number(offset))
       .limit(Number(limit))
       .populate("callerId", "name avatar email")
-      .populate("calleeId", "name avatar email")
+      .populate("receiverId", "name avatar email")
       .populate("conversationId", "name avatar");
 
     const total = await Call.countDocuments({
-      $or: [{ callerId: userId }, { calleeId: userId }],
+      $or: [{ callerId: userId }, { receiverId: userId }],
     });
 
     res.json({
@@ -46,7 +46,7 @@ router.get("/:callId", authenticateToken, async (req, res) => {
 
     const call = await Call.findById(callId)
       .populate("callerId", "name avatar email")
-      .populate("calleeId", "name avatar email")
+      .populate("receiverId", "name avatar email")
       .populate("conversationId", "name avatar");
 
     if (!call) {
@@ -57,7 +57,10 @@ router.get("/:callId", authenticateToken, async (req, res) => {
     }
 
     // Verify user is part of this call
-    if (call.callerId.toString() !== userId && call.calleeId.toString() !== userId) {
+    const callerIdStr = call.callerId?.toString() || '';
+    const receiverIdStr = call.receiverId?.toString() || '';
+    
+    if (callerIdStr !== userId && receiverIdStr !== userId) {
       return res.status(403).json({
         success: false,
         msg: "Not authorized to view this call",
@@ -93,7 +96,9 @@ router.delete("/:callId", authenticateToken, async (req, res) => {
     }
 
     // Only the caller can delete the call record
-    if (call.callerId.toString() !== userId) {
+    const callerIdStr = call.callerId?.toString() || '';
+    
+    if (callerIdStr !== userId) {
       return res.status(403).json({
         success: false,
         msg: "Not authorized to delete this call",

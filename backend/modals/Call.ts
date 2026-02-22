@@ -58,7 +58,7 @@ const callSchema = new Schema<ICall>(
 
 // Index for efficient querying
 callSchema.index({ callerId: 1, createdAt: -1 });
-callSchema.index({ calleeId: 1, createdAt: -1 });
+callSchema.index({ receiverId: 1, createdAt: -1 });
 callSchema.index({ conversationId: 1, createdAt: -1 });
 
 const Call = mongoose.model<ICall>("Call", callSchema);
