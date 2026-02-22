@@ -38,15 +38,23 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
 
   // End call room
   socket.on('endCallRoom', async ({ roomId, callData }) => {
-    console.log(`[WebRTC] Ending room ${roomId}`);
-    console.log(`[WebRTC] Call data received:`, callData);
+    console.log(`[WebRTC] ========== END CALL ROOM ==========`);
+    console.log(`[WebRTC] Room ID: ${roomId}`);
+    console.log(`[WebRTC] Call data received:`, JSON.stringify(callData, null, 2));
+    console.log(`[WebRTC] Has conversationId:`, !!callData?.conversationId);
+    console.log(`[WebRTC] Has callerId:`, !!callData?.callerId);
     
     // Create call message if call data provided
     if (callData && callData.conversationId && callData.callerId) {
       try {
         const { conversationId, callerId, duration, callType, status } = callData;
         
+        console.log(`[WebRTC] ✅ All required fields present`);
         console.log(`[WebRTC] Creating call message for conversation ${conversationId}`);
+        console.log(`[WebRTC] Caller ID: ${callerId}`);
+        console.log(`[WebRTC] Duration: ${duration}s`);
+        console.log(`[WebRTC] Call type: ${callType}`);
+        console.log(`[WebRTC] Status: ${status}`);
         
         // Create call message
         const callMessage = await Message.create({
@@ -61,18 +69,28 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
           },
         });
 
-        console.log(`[WebRTC] Call message created:`, callMessage._id);
+        console.log(`[WebRTC] ✅ Call message created in DB:`, callMessage._id);
+        console.log(`[WebRTC] Message details:`, {
+          id: callMessage._id,
+          conversationId: callMessage.conversationId,
+          senderId: callMessage.senderId,
+          isCallMessage: callMessage.isCallMessage,
+          callData: callMessage.callData,
+        });
 
         // Populate sender info
         const populatedMessage = await Message.findById(callMessage._id)
           .populate('senderId', 'name avatar');
 
-        console.log(`[WebRTC] Populated message:`, populatedMessage);
+        console.log(`[WebRTC] ✅ Message populated with sender info`);
+        console.log(`[WebRTC] Sender name:`, (populatedMessage.senderId as any)?.name);
 
         // Update conversation's last message
         await Conversation.findByIdAndUpdate(conversationId, {
           lastMessage: callMessage._id,
         });
+
+        console.log(`[WebRTC] ✅ Conversation lastMessage updated`);
 
         // Emit to all users in conversation
         const messageData = {
@@ -92,7 +110,8 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
           },
         };
 
-        console.log(`[WebRTC] Emitting newCallMessage to conversation room ${conversationId}:`, messageData);
+        console.log(`[WebRTC] Prepared message data for emission:`, JSON.stringify(messageData, null, 2));
+        console.log(`[WebRTC] Emitting newCallMessage to conversation room ${conversationId}`);
         io.to(conversationId).emit('newCallMessage', messageData);
 
         // Also emit directly to both caller and receiver by finding their sockets

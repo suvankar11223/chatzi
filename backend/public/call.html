@@ -452,18 +452,32 @@
     }
 
     function endCall() {
+      console.log('[Call.html] ========== END CALL ==========');
+      console.log('[Call.html] conversationId:', conversationId);
+      console.log('[Call.html] userId:', userId);
+      console.log('[Call.html] callType:', callType);
+      console.log('[Call.html] callStartTime:', callStartTime);
+      console.log('[Call.html] callConnected:', callConnected);
+      
       const duration = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
+      console.log('[Call.html] Calculated duration:', duration);
+      
+      const callData = {
+        conversationId,
+        callerId: userId,
+        duration,
+        callType,
+        status: callConnected ? 'completed' : 'missed',
+      };
+      
+      console.log('[Call.html] Emitting endCallRoom with data:', JSON.stringify(callData, null, 2));
       
       socket?.emit('endCallRoom', { 
         roomId,
-        callData: {
-          conversationId,
-          callerId: userId,
-          duration,
-          callType,
-          status: callConnected ? 'completed' : 'missed',
-        }
+        callData,
       });
+      
+      console.log('[Call.html] ✅ endCallRoom emitted');
       
       cleanup();
       window.ReactNativeWebView?.postMessage(JSON.stringify({ type: 'endCall' }));
