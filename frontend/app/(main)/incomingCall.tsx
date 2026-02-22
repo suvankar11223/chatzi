@@ -18,6 +18,8 @@ export default function IncomingCallScreen() {
   const callerAvatar = String(params.callerAvatar || '');
   const callType = String(params.callType || 'video') as 'voice' | 'video';
   const roomName = String(params.roomName || '');
+  const token = String(params.token || '');
+  const wsUrl = String(params.wsUrl || '');
 
   useEffect(() => {
     Vibration.vibrate([500, 500, 500], true);
@@ -33,8 +35,11 @@ export default function IncomingCallScreen() {
       params: {
         callId,
         roomName,
+        token,
+        wsUrl,
         callType,
-        name: callerName,
+        name: String(params.receiverName || 'You'),
+        otherUserName: callerName,
         avatar: callerAvatar,
         otherUserId: callerId,
         isCaller: 'false',

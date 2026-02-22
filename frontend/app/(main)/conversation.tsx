@@ -26,6 +26,9 @@ import Input from "@/components/Input";
 import { uploadImageToCloudinary } from "@/services/imageService";
 import { getSocket } from "@/socket/socket";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import axios from "axios";
+import { getApiUrl } from "@/utils/network";
 
 interface MessageType {
   id: string;
@@ -85,7 +88,7 @@ const Conversation = () => {
   }, [isDirect, otherUserId, online, onlineUsers]);
 
   // ─── START CALL ───────────────────────────────────────────
-  const startCall = (callType: 'voice' | 'video') => {
+  const startCall = async (callType: 'voice' | 'video') => {
     console.log('[Call Debug] rawType:', type, 'isDirect:', isDirect, 'otherUserId:', otherUserId);
 
     if (!isDirect || !otherUserId) {
@@ -99,44 +102,73 @@ const Conversation = () => {
       return;
     }
 
-    // Generate unique room name — no API call needed!
-    const roomName = `chatzi-${conversationId}-${Date.now()}`;
-    console.log('[Call] Initiating', callType, 'call, room:', roomName);
+    try {
+      // Generate unique room name
+      const roomName = `chatzi-${conversationId}-${Date.now()}`;
+      console.log('[Call] Initiating', callType, 'call, room:', roomName);
 
-    socket.emit('initiateCall', {
-      receiverId: String(otherUserId),
-      callType,
-      conversationId: String(conversationId),
-      callerName: currentUser?.name || 'Unknown',
-      callerAvatar: currentUser?.avatar || '',
-      roomName,
-    });
+      // Get caller's LiveKit token
+      const token = await AsyncStorage.getItem('token');
+      const apiUrl = await getApiUrl();
+      const response = await axios.post(
+        `${apiUrl}/livekit/token`,
+        {
+          roomName,
+          participantName: `caller-${currentUser?.id}`,
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
 
-    socket.once('callInitiated', ({ callId }: any) => {
-      console.log('[Call] Navigating to callScreen, room:', roomName);
-      
-      // Small delay to ensure socket event is processed
-      setTimeout(() => {
-        router.replace({
-          pathname: '/callScreen',
-          params: {
-            callId: String(callId),
-            roomName: String(roomName),
-            callType: String(callType),
-            name: String(conversationName || 'User'),
-            avatar: String(conversationAvatar || ''),
-            otherUserId: String(otherUserId || ''),
-            isCaller: 'true',
-          },
-        });
-      }, 100);
-    });
-
-    socket.once('callResponse', (res: any) => {
-      if (!res.success) {
-        Alert.alert('Call Failed', res.msg || 'Unable to initiate call');
+      if (!response.data.success) {
+        Alert.alert('Error', 'Failed to generate call token');
+        return;
       }
-    });
+
+      const { token: livekitToken, wsUrl } = response.data;
+
+      socket.emit('initiateCall', {
+        receiverId: String(otherUserId),
+        callType,
+        conversationId: String(conversationId),
+        callerName: currentUser?.name || 'Unknown',
+        callerAvatar: currentUser?.avatar || '',
+        roomName,
+        wsUrl,
+      });
+
+      socket.once('callInitiated', ({ callId }: any) => {
+        console.log('[Call] Navigating to callScreen, room:', roomName);
+        
+        setTimeout(() => {
+          router.replace({
+            pathname: '/callScreen',
+            params: {
+              callId: String(callId),
+              roomName: String(roomName),
+              token: String(livekitToken),
+              wsUrl: String(wsUrl),
+              callType: String(callType),
+              name: String(currentUser?.name || 'You'),
+              otherUserName: String(conversationName || 'User'),
+              avatar: String(conversationAvatar || ''),
+              otherUserId: String(otherUserId || ''),
+              isCaller: 'true',
+            },
+          });
+        }, 100);
+      });
+
+      socket.once('callResponse', (res: any) => {
+        if (!res.success) {
+          Alert.alert('Call Failed', res.msg || 'Unable to initiate call');
+        }
+      });
+    } catch (error: any) {
+      console.error('[Call] Error:', error);
+      Alert.alert('Error', 'Failed to initiate call');
+    }
   };
 
   // ─── PICK FILE ────────────────────────────────────────────
