@@ -289,6 +289,8 @@ export function registerChatEvents(io: SocketIOServer, socket: Socket) {
         content: message.content,
         attachment: message.attachment,
         createdAt: message.createdAt,
+        isCallMessage: message.isCallMessage,
+        callData: message.callData,
         sender: {
           id: message.senderId._id,
           name: message.senderId.name,

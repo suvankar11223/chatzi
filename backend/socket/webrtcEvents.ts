@@ -95,6 +95,23 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
         console.log(`[WebRTC] Emitting newCallMessage to conversation room ${conversationId}:`, messageData);
         io.to(conversationId).emit('newCallMessage', messageData);
 
+        // Also emit directly to both caller and receiver by finding their sockets
+        const conversation = await Conversation.findById(conversationId);
+        if (conversation) {
+          const allSockets = Array.from(io.sockets.sockets.values());
+          conversation.participants.forEach((participantId: any) => {
+            const participantIdStr = participantId.toString();
+            const participantSockets = allSockets.filter(
+              (s) => (s as any).userId === participantIdStr
+            );
+            
+            participantSockets.forEach((s) => {
+              console.log(`[WebRTC] Emitting newCallMessage directly to user ${participantIdStr}, socket: ${s.id}`);
+              s.emit('newCallMessage', messageData);
+            });
+          });
+        }
+
         console.log('[WebRTC] ✅ Call message sent successfully');
       } catch (err) {
         console.error('[WebRTC] ❌ Error creating call message:', err);
