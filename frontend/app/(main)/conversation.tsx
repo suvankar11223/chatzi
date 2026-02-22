@@ -92,6 +92,7 @@ const Conversation = () => {
 
   // ─── START CALL ───────────────────────────────────────────
   const startCall = (callType: 'voice' | 'video') => {
+    console.log('[Call] ========== START CALL ==========');
     console.log('[Call Debug] rawType:', type, 'isDirect:', isDirect, 'otherUserId:', otherUserId);
 
     if (!isDirect || !otherUserId) {
@@ -105,20 +106,32 @@ const Conversation = () => {
       return;
     }
 
+    console.log('[Call] ✅ Socket connected');
+    console.log('[Call] Current user ID:', currentUser?.id);
+    console.log('[Call] Current user name:', currentUser?.name);
+    console.log('[Call] Other user ID:', otherUserId);
+    console.log('[Call] Conversation ID:', conversationId);
+
     // Generate unique room ID
     const roomId = `chatzi-${conversationId}-${Date.now()}`;
-    console.log('[Call] Initiating', callType, 'call, room:', roomId);
+    console.log('[Call] Generated room ID:', roomId);
+    console.log('[Call] Initiating', callType, 'call');
 
-    socket.emit('initiateCall', {
+    const initiateData = {
       receiverId: String(otherUserId),
       callType,
       conversationId: String(conversationId),
       callerName: currentUser?.name || 'Unknown',
       callerAvatar: currentUser?.avatar || '',
       roomId,
-    });
+    };
+
+    console.log('[Call] Emitting initiateCall with data:', initiateData);
+
+    socket.emit('initiateCall', initiateData);
 
     socket.once('callInitiated', ({ callId }: any) => {
+      console.log('[Call] ✅ Received callInitiated event, callId:', callId);
       console.log('[Call] Navigating to callScreen');
       
       router.push({
@@ -134,13 +147,18 @@ const Conversation = () => {
           isCaller: 'true',
         },
       });
+      
+      console.log('[Call] ✅ Navigation triggered');
     });
 
     socket.once('callResponse', (res: any) => {
+      console.log('[Call] Received callResponse:', res);
       if (!res.success) {
         Alert.alert('Call Failed', res.msg || 'Unable to initiate call');
       }
     });
+    
+    console.log('[Call] ========== WAITING FOR RESPONSE ==========');
   };
 
   // ─── PICK FILE ────────────────────────────────────────────

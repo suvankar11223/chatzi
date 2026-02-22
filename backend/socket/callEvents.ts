@@ -14,6 +14,12 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
     roomId: string;
   }) => {
     try {
+      console.log('[Call] ========== INITIATE CALL ==========');
+      console.log('[Call] Caller ID:', userId);
+      console.log('[Call] Receiver ID:', data.receiverId);
+      console.log('[Call] Call Type:', data.callType);
+      console.log('[Call] Room ID:', data.roomId);
+      
       const { receiverId, callType, conversationId, callerName, callerAvatar, roomId } = data;
 
       const call = await Call.create({
@@ -25,13 +31,24 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
         agoraChannel: roomId,
       });
 
+      console.log('[Call] Call created in DB:', call._id);
+
       // Find receiver socket
       const allSockets = Array.from(io.sockets.sockets.values());
+      console.log('[Call] Total connected sockets:', allSockets.length);
+      
+      // Log all connected user IDs
+      const connectedUserIds = allSockets.map(s => (s as any).userId).filter(Boolean);
+      console.log('[Call] Connected user IDs:', connectedUserIds);
+      
       const receiverSockets = allSockets.filter(
         (s) => (s as any).userId === receiverId
       );
 
+      console.log('[Call] Receiver sockets found:', receiverSockets.length);
+
       if (receiverSockets.length === 0) {
+        console.log('[Call] ❌ Receiver is offline');
         await Call.findByIdAndUpdate(call._id, { status: 'missed' });
         socket.emit('callResponse', {
           success: false,
@@ -45,20 +62,28 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
       const receiver = await User.findById(receiverId);
       const receiverName = receiver?.name || 'You';
 
+      console.log('[Call] Receiver name:', receiverName);
+
       // Notify receiver
-      receiverSockets.forEach((s) => {
-        console.log('[Call] Sending incomingCall to receiver:', receiverId);
-        s.emit('incomingCall', {
-          callId: call._id,
-          callerId: userId,
-          callerName,
-          callerAvatar,
-          callType,
-          roomId,
-          conversationId,
-          receiverName,
-        });
+      const incomingCallData = {
+        callId: call._id,
+        callerId: userId,
+        callerName,
+        callerAvatar,
+        callType,
+        roomId,
+        conversationId,
+        receiverName,
+      };
+      
+      console.log('[Call] Emitting incomingCall event with data:', incomingCallData);
+      
+      receiverSockets.forEach((s, index) => {
+        console.log(`[Call] Emitting to receiver socket ${index + 1}/${receiverSockets.length}, socket ID:`, s.id);
+        s.emit('incomingCall', incomingCallData);
       });
+
+      console.log('[Call] ✅ incomingCall event sent to all receiver sockets');
 
       // Tell caller: call created
       socket.emit('callInitiated', {
@@ -68,8 +93,9 @@ export function registerCallEvents(io: SocketIOServer, socket: Socket) {
       });
 
       socket.emit('callResponse', { success: true });
+      console.log('[Call] ========== INITIATE CALL COMPLETE ==========');
     } catch (err: any) {
-      console.error('[Call] initiateCall error:', err);
+      console.error('[Call] ❌ initiateCall error:', err);
       socket.emit('callResponse', { success: false, msg: 'Server error' });
     }
   });
