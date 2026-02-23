@@ -252,7 +252,15 @@ const Conversation = () => {
       return;
     }
 
+    console.log('[Conversation] ========== SOCKET SETUP ==========');
+    console.log('[Conversation] Conversation ID:', conversationId);
+    console.log('[Conversation] Current user ID:', currentUser.id);
+
     const onGetMessages = (data: any) => {
+      console.log('[Conversation] ========== GET MESSAGES RESPONSE ==========');
+      console.log('[Conversation] Success:', data.success);
+      console.log('[Conversation] Message count:', data.data?.length || 0);
+      
       if (data.success && data.data && data.data.length > 0) {
         const msgs = data.data.map((m: any) => ({
           id: m.id,
@@ -261,12 +269,20 @@ const Conversation = () => {
           attachment: m.attachment,
           createdAt: m.createdAt,
           isMe: m.sender.id === currentUser.id,
+          isCallMessage: m.isCallMessage,
+          callData: m.callData,
         }));
+        
+        console.log('[Conversation] Setting messages, call messages:', msgs.filter((m: any) => m.isCallMessage).length);
         setMessages(msgs);
       }
     };
 
     const onNewMessage = (data: any) => {
+      console.log('[Conversation] ========== NEW MESSAGE ==========');
+      console.log('[Conversation] Message ID:', data.data?.id);
+      console.log('[Conversation] Is call message:', data.data?.isCallMessage);
+      
       if (data.success && data.data && data.data.conversationId === conversationId) {
         const msg = {
           id: data.data.id,
@@ -281,7 +297,10 @@ const Conversation = () => {
 
         setMessages(prev => {
           const existsByRealId = prev.some(m => m.id === msg.id && !m.id.startsWith('temp_'));
-          if (existsByRealId) return prev;
+          if (existsByRealId) {
+            console.log('[Conversation] Message already exists, skipping');
+            return prev;
+          }
 
           if (msg.isMe) {
             const optimisticIndex = prev.findIndex(
@@ -290,12 +309,14 @@ const Conversation = () => {
                 m.sender.id === msg.sender.id
             );
             if (optimisticIndex !== -1) {
+              console.log('[Conversation] Replacing optimistic message');
               const newList = [...prev];
               newList[optimisticIndex] = msg;
               return newList;
             }
           }
 
+          console.log('[Conversation] Adding new message to list');
           return [msg, ...prev];
         });
       }
@@ -303,7 +324,8 @@ const Conversation = () => {
     };
 
     const onNewCallMessage = (data: any) => {
-      console.log('[Conversation] ✅ Received newCallMessage event:', data);
+      console.log('[Conversation] ========== NEW CALL MESSAGE ==========');
+      console.log('[Conversation] ✅ Received newCallMessage event:', JSON.stringify(data, null, 2));
       
       if (data.success && data.data && data.data.conversationId === conversationId) {
         console.log('[Conversation] Creating call message in UI');
@@ -320,9 +342,18 @@ const Conversation = () => {
         };
 
         console.log('[Conversation] Call message:', msg);
-        setMessages(prev => [msg, ...prev]);
+        setMessages(prev => {
+          // Check if message already exists
+          const exists = prev.some(m => m.id === msg.id);
+          if (exists) {
+            console.log('[Conversation] Call message already exists');
+            return prev;
+          }
+          console.log('[Conversation] Adding call message to list');
+          return [msg, ...prev];
+        });
       } else {
-        console.log('[Conversation] Call message not for this conversation');
+        console.log('[Conversation] Call message not for this conversation or invalid data');
       }
     };
 
@@ -337,11 +368,23 @@ const Conversation = () => {
     socket.on('newCallMessage', onNewCallMessage);
     socket.on('markAsRead', onMarkAsRead);
 
+    console.log('[Conversation] Joining conversation room:', conversationId);
     socket.emit('joinConversation', conversationId);
+    
+    console.log('[Conversation] Requesting messages');
     socket.emit('getMessages', { conversationId });
+    
     socket.emit('markAsRead', { conversationId });
 
+    // Polling fallback: Refetch messages after 2 seconds (in case call just ended)
+    const pollTimer = setTimeout(() => {
+      console.log('[Conversation] Polling for new messages (fallback)');
+      socket.emit('getMessages', { conversationId });
+    }, 2000);
+
     return () => {
+      console.log('[Conversation] Cleaning up socket listeners');
+      clearTimeout(pollTimer);
       socket.off('getMessages', onGetMessages);
       socket.off('newMessage', onNewMessage);
       socket.off('newCallMessage', onNewCallMessage);

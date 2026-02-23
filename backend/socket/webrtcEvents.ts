@@ -110,7 +110,6 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
           },
         };
 
-        console.log(`[WebRTC] Prepared message data for emission:`, JSON.stringify(messageData, null, 2));
         console.log(`[WebRTC] Emitting newCallMessage to conversation room ${conversationId}`);
         io.to(conversationId).emit('newCallMessage', messageData);
 
@@ -118,11 +117,15 @@ export function registerWebRTCEvents(io: SocketIOServer, socket: Socket) {
         const conversation = await Conversation.findById(conversationId);
         if (conversation) {
           const allSockets = Array.from(io.sockets.sockets.values());
+          console.log(`[WebRTC] Total connected sockets: ${allSockets.length}`);
+          
           conversation.participants.forEach((participantId: any) => {
             const participantIdStr = participantId.toString();
             const participantSockets = allSockets.filter(
               (s) => (s as any).userId === participantIdStr
             );
+            
+            console.log(`[WebRTC] Found ${participantSockets.length} sockets for user ${participantIdStr}`);
             
             participantSockets.forEach((s) => {
               console.log(`[WebRTC] Emitting newCallMessage directly to user ${participantIdStr}, socket: ${s.id}`);
