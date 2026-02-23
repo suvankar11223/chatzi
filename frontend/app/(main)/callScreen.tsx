@@ -28,10 +28,16 @@ export default function CallScreen() {
     const userId = await AsyncStorage.getItem('userId');
     const conversationId = String(params.conversationId || '');
 
+    console.log('[CallScreen] ========== BUILD CALL URL ==========');
+    console.log('[CallScreen] userId:', userId);
+    console.log('[CallScreen] conversationId:', conversationId);
+    console.log('[CallScreen] roomId:', roomId);
+    console.log('[CallScreen] callType:', callType);
+
     // Build URL pointing to the HTML page served by your backend
     const url = `${serverUrl}/call.html?roomId=${encodeURIComponent(roomId)}&userId=${encodeURIComponent(userId || '')}&isCaller=${isCaller}&callType=${callType}&serverUrl=${encodeURIComponent(serverUrl)}&token=${encodeURIComponent(token || '')}&name=${encodeURIComponent(name)}&conversationId=${encodeURIComponent(conversationId)}`;
     
-    console.log('[CallScreen] Call URL built');
+    console.log('[CallScreen] Call URL built successfully');
     setCallUrl(url);
   };
 
@@ -51,17 +57,61 @@ export default function CallScreen() {
     return () => { socket.off('callEnded', onCallEnded); };
   }, [callId]);
 
-  const handleMessage = (event: any) => {
+  const handleMessage = async (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
+      console.log('[CallScreen] ========== WEBVIEW MESSAGE ==========');
+      console.log('[CallScreen] Message type:', data.type);
+      console.log('[CallScreen] Message data:', JSON.stringify(data, null, 2));
+      
       if (data.type === 'endCall' || data.type === 'callEnded') {
+        console.log('[CallScreen] Call ended, handling cleanup');
+        
         const socket = getSocket();
+        const conversationId = String(params.conversationId || '');
+        const userId = await AsyncStorage.getItem('userId');
+        
+        console.log('[CallScreen] conversationId:', conversationId);
+        console.log('[CallScreen] userId (caller):', userId);
+        console.log('[CallScreen] roomId:', roomId);
+        console.log('[CallScreen] callType:', callType);
+        
+        // Send endCallRoom from React Native (backup for WebView socket)
+        if (socket && conversationId && userId) {
+          const callData = {
+            conversationId,
+            callerId: userId, // Current user's ID
+            duration: data.duration || 0,
+            callType,
+            status: 'completed',
+          };
+          
+          console.log('[CallScreen] Emitting endCallRoom with data:', JSON.stringify(callData, null, 2));
+          
+          socket.emit('endCallRoom', {
+            roomId,
+            callData,
+          });
+          
+          console.log('[CallScreen] ✅ endCallRoom emitted');
+        } else {
+          console.error('[CallScreen] ❌ Cannot emit endCallRoom');
+          console.error('[CallScreen] socket:', !!socket);
+          console.error('[CallScreen] conversationId:', conversationId);
+          console.error('[CallScreen] userId:', userId);
+        }
+        
+        // Also send endCall to the other user
         if (socket && callId) {
           socket.emit('endCall', { callId, otherUserId });
         }
+        
+        console.log('[CallScreen] Navigating back');
         router.back();
       }
-    } catch (e) {}
+    } catch (error) {
+      console.error('[CallScreen] Error handling WebView message:', error);
+    }
   };
 
   if (!callUrl) {
