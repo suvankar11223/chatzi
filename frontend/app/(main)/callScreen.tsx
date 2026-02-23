@@ -4,10 +4,12 @@ import { WebView } from 'react-native-webview';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getSocket } from '@/socket/socket';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '@/context/authContext';
 
 export default function CallScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { user } = useAuth(); // Get current user from context
   
   const callId = String(params.callId || '');
   const roomId = String(params.roomId || '');
@@ -25,7 +27,7 @@ export default function CallScreen() {
   const buildCallUrl = async () => {
     const token = await AsyncStorage.getItem('token');
     const serverUrl = 'https://chatzi-1m0m.onrender.com';
-    const userId = await AsyncStorage.getItem('userId');
+    const userId = user?.id || ''; // Use user from context
     const conversationId = String(params.conversationId || '');
 
     console.log('[CallScreen] ========== BUILD CALL URL ==========');
@@ -35,7 +37,7 @@ export default function CallScreen() {
     console.log('[CallScreen] callType:', callType);
 
     // Build URL pointing to the HTML page served by your backend
-    const url = `${serverUrl}/call.html?roomId=${encodeURIComponent(roomId)}&userId=${encodeURIComponent(userId || '')}&isCaller=${isCaller}&callType=${callType}&serverUrl=${encodeURIComponent(serverUrl)}&token=${encodeURIComponent(token || '')}&name=${encodeURIComponent(name)}&conversationId=${encodeURIComponent(conversationId)}`;
+    const url = `${serverUrl}/call.html?roomId=${encodeURIComponent(roomId)}&userId=${encodeURIComponent(userId)}&isCaller=${isCaller}&callType=${callType}&serverUrl=${encodeURIComponent(serverUrl)}&token=${encodeURIComponent(token || '')}&name=${encodeURIComponent(name)}&conversationId=${encodeURIComponent(conversationId)}`;
     
     console.log('[CallScreen] Call URL built successfully');
     setCallUrl(url);
@@ -69,7 +71,7 @@ export default function CallScreen() {
         
         const socket = getSocket();
         const conversationId = String(params.conversationId || '');
-        const userId = await AsyncStorage.getItem('userId');
+        const userId = user?.id || ''; // Use user from context
         
         console.log('[CallScreen] conversationId:', conversationId);
         console.log('[CallScreen] userId (caller):', userId);
@@ -80,7 +82,7 @@ export default function CallScreen() {
         if (socket && conversationId && userId) {
           const callData = {
             conversationId,
-            callerId: userId, // Current user's ID
+            callerId: userId, // Current user's ID from context
             duration: data.duration || 0,
             callType,
             status: 'completed',
