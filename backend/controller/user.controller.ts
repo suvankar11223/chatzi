@@ -10,14 +10,32 @@ const logDebug = (message: string, ...args: any[]) => {
 // API endpoint to get all conversations for a user
 export const getConversations = async (req: Request, res: Response) => {
   try {
-    const currentUserId = (req as any).user.userId;
-    logDebug('getConversations API: Fetching for user:', currentUserId);
+    const clerkUserId = (req as any).user.id; // Clerk user ID
+    const userEmail = (req as any).user.email;
+    
+    logDebug('getConversations API: Clerk user ID:', clerkUserId);
+    
+    // Find current user's MongoDB ID
+    let currentUser = await User.findOne({ clerkId: clerkUserId });
+    if (!currentUser && userEmail) {
+      currentUser = await User.findOne({ email: userEmail });
+    }
+    
+    if (!currentUser) {
+      logDebug('getConversations: User not found in MongoDB, creating...');
+      currentUser = await User.create({
+        clerkId: clerkUserId,
+        name: (req as any).user.name || 'User',
+        email: userEmail || '',
+        avatar: (req as any).user.avatar || null,
+      });
+    }
     
     const Conversation = (await import('../modals/Conversation.js')).default;
     
     // Get all conversations where user is a participant
     const conversations = await Conversation.find({
-      participants: currentUserId
+      participants: currentUser._id
     })
     .populate('participants', 'name avatar email')
     .populate('lastMessage')
@@ -73,73 +91,60 @@ export const ensureStreamUsers = async (req: Request, res: Response) => {
 
 export const updateProfile = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const clerkUserId = (req as any).user.id; // Clerk user ID
     const userEmail = (req as any).user.email;
     const { name, email, avatar } = req.body;
 
     console.log('='.repeat(60));
     console.log('[DEBUG] updateProfile: Request received');
-    console.log('[DEBUG] User ID:', userId);
+    console.log('[DEBUG] Clerk User ID:', clerkUserId);
     console.log('[DEBUG] User Email:', userEmail);
-    console.log('[DEBUG] Token payload:', (req as any).user);
     console.log('[DEBUG] Update data:', { name, email, avatar });
-    console.log('[DEBUG] Avatar received:', avatar ? 'YES' : 'NO');
-    if (avatar) {
-      console.log('[DEBUG] Avatar URL:', avatar);
-      console.log('[DEBUG] Avatar type:', typeof avatar);
-      console.log('[DEBUG] Avatar length:', avatar.length);
-    }
     console.log('='.repeat(60));
 
-    // Find user
-    const user = await User.findById(userId);
+    // Find user by Clerk ID or email
+    let user = await User.findOne({ clerkId: clerkUserId });
+    if (!user && userEmail) {
+      user = await User.findOne({ email: userEmail });
+    }
+    
     if (!user) {
-      console.log('[DEBUG] updateProfile: User not found', userId);
-      return res.status(404).json({ success: false, msg: 'User not found' });
-    }
-
-    console.log('[DEBUG] updateProfile: Current user data:', {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      avatar: user.avatar,
-    });
-
-    // Check if email is being changed and if it's already taken
-    if (email && email !== user.email) {
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
-        console.log('[DEBUG] updateProfile: Email already in use', email);
-        return res.status(400).json({ success: false, msg: 'Email already in use' });
+      console.log('[DEBUG] updateProfile: User not found, creating new user');
+      // Create user if doesn't exist
+      user = await User.create({
+        clerkId: clerkUserId,
+        name: name || (req as any).user.name || 'User',
+        email: email || userEmail || '',
+        avatar: avatar || (req as any).user.avatar || null,
+      });
+      console.log('[DEBUG] updateProfile: Created user:', user._id);
+    } else {
+      console.log('[DEBUG] updateProfile: Found existing user:', user._id);
+      
+      // Check if email is being changed and if it's already taken
+      if (email && email !== user.email) {
+        const existingUser = await User.findOne({ email });
+        if (existingUser && existingUser._id.toString() !== user._id.toString()) {
+          console.log('[DEBUG] updateProfile: Email already in use', email);
+          return res.status(400).json({ success: false, msg: 'Email already in use' });
+        }
+        user.email = email;
       }
-      user.email = email;
+
+      // Update fields
+      if (name) {
+        console.log('[DEBUG] updateProfile: Updating name from', user.name, 'to', name);
+        user.name = name;
+      }
+      if (avatar !== undefined) {
+        console.log('[DEBUG] updateProfile: Updating avatar');
+        user.avatar = avatar;
+      }
+
+      await user.save();
+      console.log('[DEBUG] updateProfile: Profile updated successfully');
     }
 
-    // Update fields
-    if (name) {
-      console.log('[DEBUG] updateProfile: Updating name from', user.name, 'to', name);
-      user.name = name;
-    }
-    if (avatar !== undefined) {
-      console.log('[DEBUG] updateProfile: Updating avatar');
-      console.log('[DEBUG] Old avatar:', user.avatar || 'null');
-      console.log('[DEBUG] New avatar:', avatar || 'null');
-      user.avatar = avatar;
-    }
-
-    await user.save();
-
-    console.log('[DEBUG] updateProfile: Profile updated successfully');
-    console.log('[DEBUG] Updated user data:', {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      avatar: user.avatar,
-    });
-    console.log('[DEBUG] Avatar saved to database:', user.avatar ? 'YES' : 'NO');
-    if (user.avatar) {
-      console.log('[DEBUG] Saved avatar URL:', user.avatar);
-    }
     console.log('='.repeat(60));
 
     res.status(200).json({
@@ -237,28 +242,41 @@ export const getAllUsers = async (req: Request, res: Response) => {
 
 export const getContacts = async (req: Request, res: Response) => {
   try {
-    const currentUserId = (req as any).user.userId;
+    const clerkUserId = (req as any).user.id; // Clerk user ID
     const currentUserEmail = (req as any).user.email;
     
     console.log('='.repeat(60));
     console.log('[DEBUG] getContacts API: Request received');
-    console.log('[DEBUG] Current user ID:', currentUserId);
+    console.log('[DEBUG] Clerk user ID:', clerkUserId);
     console.log('[DEBUG] Current user email:', currentUserEmail);
-    console.log('[DEBUG] Request headers:', JSON.stringify(req.headers).substring(0, 200));
+    
+    // Find current user's MongoDB ID by Clerk ID
+    let currentUser = await User.findOne({ clerkId: clerkUserId });
+    if (!currentUser && currentUserEmail) {
+      currentUser = await User.findOne({ email: currentUserEmail });
+    }
+    
+    if (!currentUser) {
+      console.log('[DEBUG] getContacts: Current user not found in MongoDB, creating...');
+      // Create user if doesn't exist
+      currentUser = await User.create({
+        clerkId: clerkUserId,
+        name: (req as any).user.name || 'User',
+        email: currentUserEmail || '',
+        avatar: (req as any).user.avatar || null,
+      });
+      console.log('[DEBUG] getContacts: Created user:', currentUser._id);
+    }
     
     // Get all users except the current user
-    const users = await User.find({ _id: { $ne: currentUserId } }).select('-password');
+    const users = await User.find({ _id: { $ne: currentUser._id } }).select('-password');
     
     console.log('[DEBUG] getContacts API: Found', users.length, 'contacts (excluding current user)');
     
     if (users.length > 0) {
       console.log('[DEBUG] Contact names:', users.map(u => u.name).join(', '));
-      console.log('[DEBUG] Contact emails:', users.map(u => u.email).join(', '));
-      console.log('[DEBUG] Contact IDs:', users.map(u => u._id).join(', '));
     } else {
       console.log('[DEBUG] WARNING: No other users found in database!');
-      console.log('[DEBUG] Total users in DB:', await User.countDocuments());
-      console.log('[DEBUG] Current user is the only user? Check if database was seeded.');
     }
     
     const formattedUsers = users.map(user => ({
@@ -269,7 +287,6 @@ export const getContacts = async (req: Request, res: Response) => {
     }));
 
     console.log('[DEBUG] getContacts API: Returning', formattedUsers.length, 'contacts');
-    console.log('[DEBUG] Response data:', JSON.stringify({ success: true, data: formattedUsers }).substring(0, 300));
     console.log('='.repeat(60));
 
     res.status(200).json({
