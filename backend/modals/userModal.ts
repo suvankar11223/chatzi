@@ -6,6 +6,7 @@ export interface IUser extends Document {
   password: string;
   name?: string;
   avatar?: string;
+  clerkId?: string;
   created?: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
@@ -22,7 +23,7 @@ const userSchema = new Schema<IUser>(
     },
     password: {
       type: String,
-      required: [true, "Password is required"],
+      required: false, // Not required for Clerk users
       minlength: [6, "Password must be at least 6 characters"],
     },
     name: {
@@ -34,6 +35,11 @@ const userSchema = new Schema<IUser>(
     avatar: {
       type: String,
       default: "",
+    },
+    clerkId: {
+      type: String,
+      unique: true,
+      sparse: true, // Allows null values while maintaining uniqueness
     },
     created: {
       type: Date,

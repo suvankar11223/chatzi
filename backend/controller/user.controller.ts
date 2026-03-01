@@ -160,11 +160,43 @@ export const updateProfile = async (req: Request, res: Response) => {
 
 export const getProfile = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = (req as any).user.id; // Clerk user ID
+    const userEmail = (req as any).user.email;
+    const userName = (req as any).user.name;
 
-    const user = await User.findById(userId).select('-password');
+    // Try to find user in MongoDB by Clerk ID
+    let user = await User.findOne({ clerkId: userId });
+    
+    // If not found, try by email
+    if (!user && userEmail) {
+      user = await User.findOne({ email: userEmail });
+    }
+    
+    // If still not found, create the user from Clerk data
     if (!user) {
-      return res.status(404).json({ success: false, msg: 'User not found' });
+      console.log('[DEBUG] getProfile: Creating new user from Clerk data');
+      user = await User.create({
+        clerkId: userId,
+        name: userName || 'User',
+        email: userEmail || '',
+        avatar: (req as any).user.avatar || null,
+      });
+      console.log('[DEBUG] getProfile: Created user:', user._id);
+    } else {
+      // Update user with latest Clerk data if needed
+      let updated = false;
+      if (user.name !== userName && userName) {
+        user.name = userName;
+        updated = true;
+      }
+      if ((req as any).user.avatar && user.avatar !== (req as any).user.avatar) {
+        user.avatar = (req as any).user.avatar;
+        updated = true;
+      }
+      if (updated) {
+        await user.save();
+        console.log('[DEBUG] getProfile: Updated user with Clerk data');
+      }
     }
 
     res.status(200).json({

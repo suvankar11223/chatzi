@@ -23,8 +23,10 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
         const clerkUser = await clerkClient.users.getUser(payload.sub);
         (req as any).user = {
           id: clerkUser.id,
+          userId: clerkUser.id, // For backward compatibility
           email: clerkUser.emailAddresses[0]?.emailAddress,
           name: clerkUser.firstName || clerkUser.username || 'User',
+          avatar: clerkUser.imageUrl || null,
         };
         return next();
       }
