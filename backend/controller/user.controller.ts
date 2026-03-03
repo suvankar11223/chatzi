@@ -319,8 +319,10 @@ export const getContacts = async (req: Request, res: Response) => {
       console.log('[DEBUG] getContacts: Created user:', currentUser._id);
     }
     
-    // Get all users except the current user
-    const users = await User.find({ _id: { $ne: currentUser._id } }).select('-password');
+    // Get all users except the current user, sorted by newest first
+    const users = await User.find({ _id: { $ne: currentUser._id } })
+      .select('-password')
+      .sort({ createdAt: -1 });
     
     console.log('[DEBUG] getContacts API: Found', users.length, 'contacts (excluding current user)');
     
@@ -335,6 +337,7 @@ export const getContacts = async (req: Request, res: Response) => {
       name: user.name,
       email: user.email,
       avatar: user.avatar,
+      createdAt: user.createdAt,
     }));
 
     console.log('[DEBUG] getContacts API: Returning', formattedUsers.length, 'contacts');

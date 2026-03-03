@@ -209,11 +209,12 @@ const Home = () => {
   };
 
   const processContacts = (res: ResponseProps) => {
-    console.log('[DEBUG] processContacts received:', res);
-    if (res.success) {
-      setContacts(res.data || []);
-      console.log('[DEBUG] Loaded', (res.data || []).length, 'contacts via socket');
-      if (res.data && res.data.length > 0) {
+    console.log('[DEBUG] processContacts received:', res?.data?.length, 'contacts');
+    if (res.success && res.data) {
+      // Always use fresh socket data (it's already sorted newest first from backend)
+      setContacts(res.data);
+      console.log('[DEBUG] Loaded', res.data.length, 'contacts via socket');
+      if (res.data.length > 0) {
         console.log('[DEBUG] Contact names:', res.data.map((c: any) => c.name).join(', '));
         console.log('[DEBUG] Contact IDs:', res.data.map((c: any) => c._id).join(', '));
       }
@@ -518,12 +519,18 @@ const Home = () => {
     });
 
   // Contacts who DON'T have a conversation yet (shown below active chats)
-  const contactsWithoutConversation = contacts.filter(contact =>
-    !conversations.some((conv: ConversationProps) =>
-      conv.type === 'direct' &&
-      conv.participants.some((p: any) => p._id === contact._id)
-    )
-  );
+  // FIX: Use proper string comparison for MongoDB ObjectIds
+  const contactsWithoutConversation = contacts.filter(contact => {
+    const contactId = contact._id?.toString();
+    const hasConversation = conversations.some((conv: ConversationProps) => {
+      if (conv.type !== 'direct') return false;
+      return conv.participants?.some((p: any) => {
+        const participantId = p._id?.toString() || p?.toString();
+        return participantId === contactId;
+      });
+    });
+    return !hasConversation;
+  });
 
   // Debug logging
   console.log('[DEBUG] Total contacts:', contacts.length);
@@ -538,11 +545,8 @@ const Home = () => {
     console.log('[DEBUG] No contacts without conversation (all have conversations or no contacts loaded)');
   }
 
-  // Show ALL contacts without conversations (not just first one!)
-  const contactsToShow = contactsWithoutConversation;
-
   // Final merged list: active chats first (sorted), then ALL unused contacts
-  const directListData = [...directConversations, ...contactsToShow];
+  const directListData = [...directConversations, ...contactsWithoutConversation];
 
 
 
@@ -618,7 +622,7 @@ const Home = () => {
         renderItem={({ item, index }) => {
           if (selectedTab === 'direct') {
             // Check if this item is a conversation (has participants array from DB)
-            if (item.participants && item.lastMessage !== undefined) {
+            if (item.participants && Array.isArray(item.participants)) {
               // It's a conversation - show with ConversationItem
               return (
                 <ConversationItem

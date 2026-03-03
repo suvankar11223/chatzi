@@ -174,7 +174,7 @@ export const registerUserEvents = (io: SocketIOServer, socket: Socket): void => 
       const users = await User.find(
         { _id: { $ne: currentUserId } },
         { password: 0 } // exclude password field
-      ).lean(); // will fetch js object
+      ).sort({ createdAt: -1 }).lean(); // will fetch js object, newest first
 
       logDebug(`Found ${users.length} contacts (excluding current user)`);
       if (users.length > 0) {
