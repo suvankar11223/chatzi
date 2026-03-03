@@ -33,7 +33,6 @@ import { PinnedMessageBanner } from "@/components/chat/PinnedMessageBanner";
 import { EmojiReactionPicker } from "@/components/chat/EmojiReactionPicker";
 import { ReactionBubble } from "@/components/chat/ReactionBubble";
 import { audioService } from "@/services/audioService";
-import { SERVER_IP, SERVER_PORT } from "@/utils/network";
 import { MessageType } from "@/types";
 
 const Conversation = () => {
@@ -62,7 +61,6 @@ const Conversation = () => {
 
   const participants = JSON.parse(stringifiedParticipants as string);
 
-  // ✅ FIX 1: Safely parse type param — Expo Router can return arrays
   const rawType = Array.isArray(type) ? type[0] : String(type || '');
   let isDirect = rawType === "direct";
 
@@ -89,9 +87,6 @@ const Conversation = () => {
 
   // ─── START CALL ───────────────────────────────────────────
   const startCall = (callType: 'voice' | 'video') => {
-    console.log('[Call] ========== START CALL ==========');
-    console.log('[Call Debug] rawType:', type, 'isDirect:', isDirect, 'otherUserId:', otherUserId);
-
     if (!isDirect || !otherUserId) {
       Alert.alert('Error', 'Calls are only available in direct conversations');
       return;
@@ -103,34 +98,18 @@ const Conversation = () => {
       return;
     }
 
-    console.log('[Call] ✅ Socket connected');
-    console.log('[Call] Current user ID:', currentUser?.id);
-    console.log('[Call] Current user name:', currentUser?.name);
-    console.log('[Call] Other user ID:', otherUserId);
-    console.log('[Call] Conversation ID:', conversationId);
-
-    // Generate unique room ID
     const roomId = `chatzi-${conversationId}-${Date.now()}`;
-    console.log('[Call] Generated room ID:', roomId);
-    console.log('[Call] Initiating', callType, 'call');
 
-    const initiateData = {
+    socket.emit('initiateCall', {
       receiverId: String(otherUserId),
       callType,
       conversationId: String(conversationId),
       callerName: currentUser?.name || 'Unknown',
       callerAvatar: currentUser?.avatar || '',
       roomId,
-    };
-
-    console.log('[Call] Emitting initiateCall with data:', initiateData);
-
-    socket.emit('initiateCall', initiateData);
+    });
 
     socket.once('callInitiated', ({ callId }: any) => {
-      console.log('[Call] ✅ Received callInitiated event, callId:', callId);
-      console.log('[Call] Navigating to callScreen');
-      
       router.push({
         pathname: '/callScreen',
         params: {
@@ -144,18 +123,13 @@ const Conversation = () => {
           isCaller: 'true',
         },
       });
-      
-      console.log('[Call] ✅ Navigation triggered');
     });
 
     socket.once('callResponse', (res: any) => {
-      console.log('[Call] Received callResponse:', res);
       if (!res.success) {
         Alert.alert('Call Failed', res.msg || 'Unable to initiate call');
       }
     });
-    
-    console.log('[Call] ========== WAITING FOR RESPONSE ==========');
   };
 
   // ─── PICK FILE ────────────────────────────────────────────
@@ -209,14 +183,13 @@ const Conversation = () => {
       if (fileToUpload) {
         try {
           attachment = await uploadImageToCloudinary(fileToUpload.uri);
-        } catch (uploadError) {
+        } catch {
           if (!messageContent) {
             Alert.alert('Error', 'Image upload failed. Please try again.');
             setLoading(false);
             setMessages(prev => prev.filter(m => m.id !== tempId));
             return;
           }
-          console.error('[Conversation] Upload error:', uploadError);
           Alert.alert('Warning', 'Image upload failed, sending text only');
         }
       }
@@ -246,24 +219,27 @@ const Conversation = () => {
     try {
       console.log('[Conversation] Sending voice message...');
       setLoading(true);
+
+      // Directly use the production URL — no URL manipulation
+      const apiBaseUrl = 'https://chatzi-ilj9.onrender.com';
       
-      const apiBaseUrl = `http://${SERVER_IP}:${SERVER_PORT}`;
+      console.log('[Conversation] Uploading to:', `${apiBaseUrl}/api/upload/voice`);
       const { audioUrl } = await audioService.uploadVoice(uri, duration, apiBaseUrl);
-      
+
       console.log('[Conversation] Voice uploaded:', audioUrl);
-      
+
       const socket = getSocket();
-      if (!socket) {
+      if (!socket || !socket.connected) {
         throw new Error('Socket not connected');
       }
-      
+
       socket.emit('voice:send', {
         conversationId,
         senderId: currentUser?.id,
         audioUrl,
         duration,
       });
-      
+
       setLoading(false);
       console.log('[Conversation] Voice message sent');
     } catch (error) {
@@ -283,15 +259,7 @@ const Conversation = () => {
       return;
     }
 
-    console.log('[Conversation] ========== SOCKET SETUP ==========');
-    console.log('[Conversation] Conversation ID:', conversationId);
-    console.log('[Conversation] Current user ID:', currentUser.id);
-
     const onGetMessages = (data: any) => {
-      console.log('[Conversation] ========== GET MESSAGES RESPONSE ==========');
-      console.log('[Conversation] Success:', data.success);
-      console.log('[Conversation] Message count:', data.data?.length || 0);
-      
       if (data.success && data.data && data.data.length > 0) {
         const msgs = data.data.map((m: any) => ({
           id: m.id,
@@ -307,19 +275,11 @@ const Conversation = () => {
           callData: m.callData,
           reactions: m.reactions || [],
         }));
-        
-        console.log('[Conversation] Setting messages, call messages:', msgs.filter((m: any) => m.isCallMessage).length);
-        console.log('[Conversation] Voice messages:', msgs.filter((m: any) => m.type === 'voice').length);
         setMessages(msgs);
       }
     };
 
     const onNewMessage = (data: any) => {
-      console.log('[Conversation] ========== NEW MESSAGE ==========');
-      console.log('[Conversation] Message ID:', data.data?.id);
-      console.log('[Conversation] Is call message:', data.data?.isCallMessage);
-      console.log('[Conversation] Message type:', data.data?.type);
-      
       if (data.success && data.data && data.data.conversationId === conversationId) {
         const msg = {
           id: data.data.id,
@@ -338,10 +298,7 @@ const Conversation = () => {
 
         setMessages(prev => {
           const existsByRealId = prev.some(m => m.id === msg.id && !m.id.startsWith('temp_'));
-          if (existsByRealId) {
-            console.log('[Conversation] Message already exists, skipping');
-            return prev;
-          }
+          if (existsByRealId) return prev;
 
           if (msg.isMe) {
             const optimisticIndex = prev.findIndex(
@@ -350,14 +307,12 @@ const Conversation = () => {
                 m.sender.id === msg.sender.id
             );
             if (optimisticIndex !== -1) {
-              console.log('[Conversation] Replacing optimistic message');
               const newList = [...prev];
               newList[optimisticIndex] = msg;
               return newList;
             }
           }
 
-          console.log('[Conversation] Adding new message to list');
           return [msg, ...prev];
         });
       }
@@ -365,12 +320,7 @@ const Conversation = () => {
     };
 
     const onNewCallMessage = (data: any) => {
-      console.log('[Conversation] ========== NEW CALL MESSAGE ==========');
-      console.log('[Conversation] ✅ Received newCallMessage event:', JSON.stringify(data, null, 2));
-      
       if (data.success && data.data && data.data.conversationId === conversationId) {
-        console.log('[Conversation] Creating call message in UI');
-        
         const msg = {
           id: data.data.id,
           sender: data.data.sender,
@@ -382,19 +332,11 @@ const Conversation = () => {
           callData: data.data.callData,
         };
 
-        console.log('[Conversation] Call message:', msg);
         setMessages(prev => {
-          // Check if message already exists
           const exists = prev.some(m => m.id === msg.id);
-          if (exists) {
-            console.log('[Conversation] Call message already exists');
-            return prev;
-          }
-          console.log('[Conversation] Adding call message to list');
+          if (exists) return prev;
           return [msg, ...prev];
         });
-      } else {
-        console.log('[Conversation] Call message not for this conversation or invalid data');
       }
     };
 
@@ -404,11 +346,7 @@ const Conversation = () => {
       }
     };
 
-    // Voice message listener
     const onVoiceReceived = (data: any) => {
-      console.log('[Conversation] ========== VOICE MESSAGE RECEIVED ==========');
-      console.log('[Conversation] Voice message data:', data);
-      
       if (data.success && data.data && data.data.conversationId === conversationId) {
         const msg = {
           id: data.data.id,
@@ -421,7 +359,7 @@ const Conversation = () => {
           isMe: data.data.sender.id === currentUser.id,
           reactions: [],
         };
-        
+
         setMessages(prev => {
           const exists = prev.some(m => m.id === msg.id);
           if (exists) return prev;
@@ -430,34 +368,23 @@ const Conversation = () => {
       }
     };
 
-    // Pinned messages listeners
     const onMessagePinned = ({ message }: any) => {
-      console.log('[Conversation] Message pinned:', message);
       setPinnedMessages(prev => [message, ...prev].slice(0, 3));
     };
 
     const onMessageUnpinned = ({ messageId }: any) => {
-      console.log('[Conversation] Message unpinned:', messageId);
       setPinnedMessages(prev => prev.filter(m => m._id !== messageId));
     };
 
     const onPinnedMessages = ({ data }: any) => {
-      console.log('[Conversation] Received pinned messages:', data);
       setPinnedMessages(data);
     };
 
-    // Reaction listener
     const onReactionUpdated = ({ messageId, reactions }: any) => {
-      console.log('[Conversation] Reaction updated for message:', messageId);
       setMessages(prev => prev.map(m =>
         m.id === messageId ? { ...m, reactions } : m
       ));
     };
-
-    if (!socket) {
-      console.error('[Conversation] Socket is null, cannot setup listeners');
-      return;
-    }
 
     socket.on('getMessages', onGetMessages);
     socket.on('newMessage', onNewMessage);
@@ -469,25 +396,16 @@ const Conversation = () => {
     socket.on('pinnedMessages', onPinnedMessages);
     socket.on('reaction:updated', onReactionUpdated);
 
-    console.log('[Conversation] Joining conversation room:', conversationId);
     socket.emit('joinConversation', conversationId);
-    
-    console.log('[Conversation] Requesting messages');
     socket.emit('getMessages', { conversationId });
-    
-    console.log('[Conversation] Requesting pinned messages');
     socket.emit('getPinnedMessages', { conversationId });
-    
     socket.emit('markAsRead', { conversationId });
 
-    // Polling fallback: Refetch messages after 2 seconds (in case call just ended)
     const pollTimer = setTimeout(() => {
-      console.log('[Conversation] Polling for new messages (fallback)');
       socket.emit('getMessages', { conversationId });
     }, 2000);
 
     return () => {
-      console.log('[Conversation] Cleaning up socket listeners');
       clearTimeout(pollTimer);
       socket.off('getMessages', onGetMessages);
       socket.off('newMessage', onNewMessage);
@@ -549,20 +467,15 @@ const Conversation = () => {
         />
 
         <View style={styles.content}>
-          {/* Pinned Messages Banner */}
           <PinnedMessageBanner
             pinnedMessages={pinnedMessages}
             onJumpToMessage={(id) => {
-              // TODO: Scroll to message
               console.log('[Conversation] Jump to message:', id);
             }}
             onUnpin={(id) => {
               const socket = getSocket();
               if (socket) {
-                socket.emit('message:unpin', {
-                  messageId: id,
-                  conversationId
-                });
+                socket.emit('message:unpin', { messageId: id, conversationId });
               }
             }}
             isAdmin={true}
@@ -579,10 +492,7 @@ const Conversation = () => {
                   setReactionPicker({
                     visible: true,
                     messageId: item.id,
-                    position: {
-                      x: e.nativeEvent.pageX,
-                      y: e.nativeEvent.pageY
-                    },
+                    position: { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY },
                   });
                 }}
               >
@@ -595,7 +505,7 @@ const Conversation = () => {
                 ) : (
                   <MessageItem item={item} isDirect={isDirect} />
                 )}
-                
+
                 <ReactionBubble
                   reactions={item.reactions || []}
                   currentUserId={currentUser?.id || ''}
@@ -617,15 +527,13 @@ const Conversation = () => {
           />
 
           <View style={styles.footer}>
-            {/* Voice Recorder */}
             <VoiceRecorder
               onVoiceSend={handleVoiceSend}
               onCancel={() => console.log('[Conversation] Voice cancelled')}
               isRecording={isRecordingVoice}
               onRecordingChange={setIsRecordingVoice}
             />
-            
-            {/* Only show input and send button when NOT recording */}
+
             {!isRecordingVoice && (
               <>
                 <Input
@@ -672,7 +580,6 @@ const Conversation = () => {
           </View>
         </View>
 
-        {/* Emoji Reaction Picker */}
         <EmojiReactionPicker
           visible={reactionPicker.visible}
           position={reactionPicker.position}

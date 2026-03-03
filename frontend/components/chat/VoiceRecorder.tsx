@@ -20,6 +20,7 @@ export function VoiceRecorder({ onVoiceSend, onCancel, isRecording, onRecordingC
   const [recordingSecs, setRecordingSecs] = useState(0);
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isStartedRef = useRef(false); // ← track if recording actually started
 
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60).toString().padStart(2, '0');
@@ -28,55 +29,52 @@ export function VoiceRecorder({ onVoiceSend, onCancel, isRecording, onRecordingC
   };
 
   const startRecording = async () => {
+    if (isStartedRef.current) return; // prevent double start
+    
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       await audioService.startRecording();
+      
+      isStartedRef.current = true;
       onRecordingChange(true);
       setIsCancelled(false);
       setRecordingSecs(0);
 
-      // Pulse animation
       Animated.loop(
         Animated.sequence([
-          Animated.timing(scaleAnim, { 
-            toValue: 1.3, 
-            duration: 600, 
-            useNativeDriver: true 
-          }),
-          Animated.timing(scaleAnim, { 
-            toValue: 1, 
-            duration: 600, 
-            useNativeDriver: true 
-          }),
+          Animated.timing(scaleAnim, { toValue: 1.3, duration: 600, useNativeDriver: true }),
+          Animated.timing(scaleAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
         ])
       ).start();
 
-      // Timer
       timerRef.current = setInterval(() => {
         setRecordingSecs(s => s + 1);
       }, 1000);
     } catch (err) {
       console.error('[VoiceRecorder] Start recording error:', err);
+      isStartedRef.current = false;
+      onRecordingChange(false);
     }
   };
 
   const stopRecording = async () => {
-    if (!isRecording) return;
-    
+    // Don't stop if recording hasn't actually started yet
+    if (!isStartedRef.current) return;
+
     if (timerRef.current) {
       clearInterval(timerRef.current);
+      timerRef.current = null;
     }
-    
+
     scaleAnim.stopAnimation();
-    Animated.spring(scaleAnim, { 
-      toValue: 1, 
-      useNativeDriver: true 
-    }).start();
-    
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true }).start();
+
+    isStartedRef.current = false;
     onRecordingChange(false);
 
     if (isCancelled) {
       await audioService.cancelRecording();
+      setIsCancelled(false);
       onCancel();
       return;
     }
@@ -84,28 +82,35 @@ export function VoiceRecorder({ onVoiceSend, onCancel, isRecording, onRecordingC
     try {
       const { uri, duration } = await audioService.stopRecording();
       if (duration < 1) {
-        await audioService.cancelRecording();
+        // Too short — just discard, don't call cancelRecording (already stopped)
+        onCancel();
         return;
       }
       onVoiceSend(uri, duration);
     } catch (err) {
       console.error('[VoiceRecorder] Stop recording error:', err);
+      onCancel();
     }
+  };
+
+  const handleCancel = async () => {
+    setIsCancelled(true);
+    await stopRecording();
   };
 
   return (
     <View style={styles.container}>
       {isRecording && (
-        <View style={styles.recordingBar}>
+        <Pressable onPress={handleCancel} style={styles.recordingBar}>
           <View style={styles.redDot} />
           <Text style={styles.timer}>{formatTime(recordingSecs)}</Text>
-          <Text style={styles.slideHint}>← Slide to cancel</Text>
-        </View>
+          <Text style={styles.slideHint}>✕ Tap to cancel</Text>
+        </Pressable>
       )}
 
       <Pressable
-        onPressIn={startRecording}
-        onPress={stopRecording}
+        onPressIn={startRecording}   // start on press down
+        onPressOut={stopRecording}   // stop on release — NOT onPress
         delayLongPress={0}
       >
         <Animated.View style={[
