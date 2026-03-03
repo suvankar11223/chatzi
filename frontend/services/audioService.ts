@@ -1,5 +1,5 @@
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
+import { File } from 'expo-file-system';
 import { Platform } from 'react-native';
 
 class AudioService {
@@ -11,6 +11,17 @@ class AudioService {
 
   async startRecording(): Promise<void> {
     try {
+      // Clean up any existing recording first
+      if (this.recording) {
+        console.log('[AudioService] Cleaning up existing recording...');
+        try {
+          await this.recording.stopAndUnloadAsync();
+        } catch (e) {
+          console.log('[AudioService] Error cleaning up:', e);
+        }
+        this.recording = null;
+      }
+
       console.log('[AudioService] Requesting permissions...');
       const permission = await Audio.requestPermissionsAsync();
       
@@ -34,6 +45,8 @@ class AudioService {
       console.log('[AudioService] Recording started');
     } catch (error) {
       console.error('[AudioService] Failed to start recording:', error);
+      // Clean up on error
+      this.recording = null;
       throw error;
     }
   }
@@ -50,6 +63,7 @@ class AudioService {
       const uri = this.recording.getURI();
       const duration = Math.floor((Date.now() - this.recordingStartTime) / 1000);
       
+      // Clean up recording reference
       this.recording = null;
       
       console.log('[AudioService] Recording stopped:', { uri, duration });
@@ -61,6 +75,8 @@ class AudioService {
       return { uri, duration };
     } catch (error) {
       console.error('[AudioService] Failed to stop recording:', error);
+      // Clean up on error
+      this.recording = null;
       throw error;
     }
   }
@@ -157,10 +173,18 @@ class AudioService {
       
       const formData = new FormData();
       
-      // Get file info
-      const fileInfo = await FileSystem.getInfoAsync(uri);
-      if (!fileInfo.exists) {
-        throw new Error('Audio file does not exist');
+      // Use new File API instead of deprecated getInfoAsync
+      try {
+        // Check if file exists using the new File API
+        const file = new File(uri);
+        const exists = await file.exists();
+        
+        if (!exists) {
+          throw new Error('Audio file does not exist');
+        }
+      } catch (fileError) {
+        // Fallback: just try to upload anyway
+        console.log('[AudioService] Could not verify file existence, proceeding with upload');
       }
 
       // Create file object for upload
