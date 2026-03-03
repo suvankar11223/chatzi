@@ -305,6 +305,21 @@
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject',
+        },
       ]
     };
 
@@ -410,6 +425,13 @@
         else if (s === 'disconnected') setStatus('Reconnecting...', 'connecting');
         else if (s === 'failed') setStatus('Connection lost', '');
       };
+
+      // Add connection timeout so it doesn't hang forever
+      setTimeout(() => {
+        if (peerConnection && peerConnection.connectionState !== 'connected') {
+          setStatus('Connection failed — retry', '');
+        }
+      }, 20000); // 20 second timeout
     }
 
     async function createOffer() {
