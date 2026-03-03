@@ -1,7 +1,20 @@
-import { Stack } from "expo-router";
+import { Stack, Redirect } from "expo-router";
 import React from "react";
+import { useAuth } from "@clerk/clerk-expo";
 
 const RootLayout = () => {
+  const { isSignedIn, isLoaded } = useAuth();
+
+  // Wait for auth to load
+  if (!isLoaded) {
+    return null;
+  }
+
+  // Redirect to welcome if not authenticated
+  if (!isSignedIn) {
+    return <Redirect href="/(auth)/welcome" />;
+  }
+
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen
@@ -52,3 +65,4 @@ const RootLayout = () => {
 };
 
 export default RootLayout;
+

@@ -1,16 +1,15 @@
 {
   "expo": {
-    "name": "Chatzi",
-    "slug": "chatzi",
+    "name": "Bublizi",
+    "slug": "bublizi",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "chatzi",
+    "scheme": "bublizi",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.chatzi.app"
+      "bundleIdentifier": "com.chinmayee.bublizi"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +18,7 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "package": "com.chatzi.app",
+      "package": "com.chinmayee.bublizi",
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
@@ -58,16 +57,14 @@
             "MODIFY_AUDIO_SETTINGS"
           ]
         }
-      ]
+      ],
+      "expo-secure-store",
+      "expo-web-browser"
     ],
-    "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
-    },
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "481003d9-ca01-43e2-a8f6-85e6f03be2eb"
+        "projectId": "ee411388-aaac-48fc-bfe0-b313a02ed77b"
       }
     }
   }

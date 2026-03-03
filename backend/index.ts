@@ -9,6 +9,7 @@ import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import callRoutes from './routes/call.routes.js';
 import livekitRoutes from './routes/livekit.routes.js';
+import uploadRoutes from './routes/upload.routes.js';
 import { initializeSocket } from './socket/socket.js';
 import os from 'os';
 
@@ -84,6 +85,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/livekit', livekitRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // 404 handler for undefined routes
 app.use((_req, res) => {
@@ -101,6 +103,9 @@ const server = http.createServer(app);
 
 // Initialize Socket.IO
 const io = initializeSocket(server);
+
+// Store io instance globally for broadcasting from controllers
+(global as any).io = io;
 
 const startServer = async () => {
   try {

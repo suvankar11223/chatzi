@@ -168,6 +168,18 @@ export const getProfile = async (req: Request, res: Response) => {
     const userId = (req as any).user.id; // Clerk user ID
     const userEmail = (req as any).user.email;
     const userName = (req as any).user.name;
+    const userAvatar = (req as any).user.avatar; // Clerk avatar (includes Google avatar)
+
+    console.log('='.repeat(60));
+    console.log('[DEBUG] getProfile: Clerk user data received:');
+    console.log('[DEBUG]   - userId:', userId);
+    console.log('[DEBUG]   - userEmail:', userEmail);
+    console.log('[DEBUG]   - userName:', userName);
+    console.log('[DEBUG]   - userAvatar:', userAvatar);
+    console.log('[DEBUG]   - userAvatar type:', typeof userAvatar);
+    console.log('[DEBUG]   - userAvatar is null?', userAvatar === null);
+    console.log('[DEBUG]   - userAvatar is undefined?', userAvatar === undefined);
+    console.log('='.repeat(60));
 
     // Try to find user in MongoDB by Clerk ID
     let user = await User.findOne({ clerkId: userId });
@@ -180,29 +192,68 @@ export const getProfile = async (req: Request, res: Response) => {
     // If still not found, create the user from Clerk data
     if (!user) {
       console.log('[DEBUG] getProfile: Creating new user from Clerk data');
+      console.log('[DEBUG] getProfile: Will save avatar:', userAvatar);
+      
       user = await User.create({
         clerkId: userId,
         name: userName || 'User',
         email: userEmail || '',
-        avatar: (req as any).user.avatar || null,
+        avatar: userAvatar || null, // Save Clerk avatar (Google avatar)
       });
-      console.log('[DEBUG] getProfile: Created user:', user._id);
+      
+      console.log('[DEBUG] getProfile: User created successfully');
+      console.log('[DEBUG] getProfile: Saved user._id:', user._id);
+      console.log('[DEBUG] getProfile: Saved user.avatar:', user.avatar);
+      
+      // Broadcast new user to all connected clients via socket
+      try {
+        const io = (global as any).io;
+        if (io) {
+          io.emit('newUserRegistered', {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            avatar: user.avatar,
+          });
+          console.log('[DEBUG] getProfile: Broadcasted new user to all clients');
+        }
+      } catch (broadcastError) {
+        console.error('[DEBUG] getProfile: Error broadcasting new user:', broadcastError);
+      }
     } else {
+      console.log('[DEBUG] getProfile: Found existing user:', user._id);
+      console.log('[DEBUG] getProfile: Current user.avatar:', user.avatar);
+      console.log('[DEBUG] getProfile: Clerk userAvatar:', userAvatar);
+      
       // Update user with latest Clerk data if needed
       let updated = false;
       if (user.name !== userName && userName) {
+        console.log('[DEBUG] getProfile: Updating name from', user.name, 'to', userName);
         user.name = userName;
         updated = true;
       }
-      if ((req as any).user.avatar && user.avatar !== (req as any).user.avatar) {
-        user.avatar = (req as any).user.avatar;
+      // Always update avatar if Clerk has one and it's different
+      if (userAvatar && user.avatar !== userAvatar) {
+        console.log('[DEBUG] getProfile: Updating avatar from', user.avatar, 'to', userAvatar);
+        user.avatar = userAvatar;
         updated = true;
       }
       if (updated) {
         await user.save();
-        console.log('[DEBUG] getProfile: Updated user with Clerk data');
+        console.log('[DEBUG] getProfile: User updated with Clerk data');
+        console.log('[DEBUG] getProfile: New user.avatar:', user.avatar);
+      } else {
+        console.log('[DEBUG] getProfile: No updates needed');
       }
     }
+
+    console.log('='.repeat(60));
+    console.log('[DEBUG] getProfile: Returning user data:');
+    console.log('[DEBUG]   - id:', user._id);
+    console.log('[DEBUG]   - name:', user.name);
+    console.log('[DEBUG]   - email:', user.email);
+    console.log('[DEBUG]   - avatar:', user.avatar);
+    console.log('='.repeat(60));
 
     res.status(200).json({
       success: true,

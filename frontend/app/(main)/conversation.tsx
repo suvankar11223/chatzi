@@ -13,6 +13,7 @@ import {
   Image,
   Alert,
   ActivityIndicator,
+  Pressable,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "@/context/authContext";
@@ -26,25 +27,14 @@ import Input from "@/components/Input";
 import { uploadImageToCloudinary } from "@/services/imageService";
 import { getSocket } from "@/socket/socket";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
-
-interface MessageType {
-  id: string;
-  sender: {
-    id: string;
-    name: string;
-    avatar: string | null;
-  };
-  content: string;
-  attachment?: string | null;
-  createdAt: string;
-  isMe: boolean;
-  isCallMessage?: boolean;
-  callData?: {
-    type: 'voice' | 'video';
-    duration?: number;
-    status?: 'completed' | 'missed' | 'declined';
-  };
-}
+import { VoiceRecorder } from "@/components/chat/VoiceRecorder";
+import { VoiceMessageBubble } from "@/components/chat/VoiceMessageBubble";
+import { PinnedMessageBanner } from "@/components/chat/PinnedMessageBanner";
+import { EmojiReactionPicker } from "@/components/chat/EmojiReactionPicker";
+import { ReactionBubble } from "@/components/chat/ReactionBubble";
+import { audioService } from "@/services/audioService";
+import { SERVER_IP, SERVER_PORT } from "@/utils/network";
+import { MessageType } from "@/types";
 
 const Conversation = () => {
   const { user: currentUser } = useAuth();
@@ -54,6 +44,13 @@ const Conversation = () => {
   const [selectedFile, setSelectedFile] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<MessageType[]>([]);
+  const [pinnedMessages, setPinnedMessages] = useState<any[]>([]);
+  const [reactionPicker, setReactionPicker] = useState({
+    visible: false,
+    messageId: '',
+    position: { x: 0, y: 0 }
+  });
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
 
   const {
     id: conversationId,
@@ -212,13 +209,14 @@ const Conversation = () => {
       if (fileToUpload) {
         try {
           attachment = await uploadImageToCloudinary(fileToUpload.uri);
-        } catch (uploadError: any) {
+        } catch (uploadError) {
           if (!messageContent) {
             Alert.alert('Error', 'Image upload failed. Please try again.');
             setLoading(false);
             setMessages(prev => prev.filter(m => m.id !== tempId));
             return;
           }
+          console.error('[Conversation] Upload error:', uploadError);
           Alert.alert('Warning', 'Image upload failed, sending text only');
         }
       }
@@ -236,9 +234,42 @@ const Conversation = () => {
 
       setLoading(false);
     } catch (error) {
+      console.error('[Conversation] Send message error:', error);
       Alert.alert("Error", "Failed to send message");
       setLoading(false);
       setMessages(prev => prev.filter(m => m.id !== tempId));
+    }
+  };
+
+  // ─── SEND VOICE MESSAGE ───────────────────────────────────
+  const handleVoiceSend = async (uri: string, duration: number) => {
+    try {
+      console.log('[Conversation] Sending voice message...');
+      setLoading(true);
+      
+      const apiBaseUrl = `http://${SERVER_IP}:${SERVER_PORT}`;
+      const { audioUrl } = await audioService.uploadVoice(uri, duration, apiBaseUrl);
+      
+      console.log('[Conversation] Voice uploaded:', audioUrl);
+      
+      const socket = getSocket();
+      if (!socket) {
+        throw new Error('Socket not connected');
+      }
+      
+      socket.emit('voice:send', {
+        conversationId,
+        senderId: currentUser?.id,
+        audioUrl,
+        duration,
+      });
+      
+      setLoading(false);
+      console.log('[Conversation] Voice message sent');
+    } catch (error) {
+      console.error('[Conversation] Voice send error:', error);
+      Alert.alert('Error', 'Failed to send voice message');
+      setLoading(false);
     }
   };
 
@@ -267,13 +298,18 @@ const Conversation = () => {
           sender: m.sender,
           content: m.content,
           attachment: m.attachment,
+          type: m.type || 'text',
+          audioUrl: m.audioUrl,
+          audioDuration: m.audioDuration,
           createdAt: m.createdAt,
           isMe: m.sender.id === currentUser.id,
           isCallMessage: m.isCallMessage,
           callData: m.callData,
+          reactions: m.reactions || [],
         }));
         
         console.log('[Conversation] Setting messages, call messages:', msgs.filter((m: any) => m.isCallMessage).length);
+        console.log('[Conversation] Voice messages:', msgs.filter((m: any) => m.type === 'voice').length);
         setMessages(msgs);
       }
     };
@@ -282,6 +318,7 @@ const Conversation = () => {
       console.log('[Conversation] ========== NEW MESSAGE ==========');
       console.log('[Conversation] Message ID:', data.data?.id);
       console.log('[Conversation] Is call message:', data.data?.isCallMessage);
+      console.log('[Conversation] Message type:', data.data?.type);
       
       if (data.success && data.data && data.data.conversationId === conversationId) {
         const msg = {
@@ -289,10 +326,14 @@ const Conversation = () => {
           sender: data.data.sender,
           content: data.data.content,
           attachment: data.data.attachment,
+          type: data.data.type || 'text',
+          audioUrl: data.data.audioUrl,
+          audioDuration: data.data.audioDuration,
           createdAt: data.data.createdAt,
           isMe: data.data.sender.id === currentUser.id,
           isCallMessage: data.data.isCallMessage,
           callData: data.data.callData,
+          reactions: data.data.reactions || [],
         };
 
         setMessages(prev => {
@@ -363,16 +404,79 @@ const Conversation = () => {
       }
     };
 
+    // Voice message listener
+    const onVoiceReceived = (data: any) => {
+      console.log('[Conversation] ========== VOICE MESSAGE RECEIVED ==========');
+      console.log('[Conversation] Voice message data:', data);
+      
+      if (data.success && data.data && data.data.conversationId === conversationId) {
+        const msg = {
+          id: data.data.id,
+          sender: data.data.sender,
+          content: '',
+          type: 'voice' as const,
+          audioUrl: data.data.audioUrl,
+          audioDuration: data.data.audioDuration,
+          createdAt: data.data.createdAt,
+          isMe: data.data.sender.id === currentUser.id,
+          reactions: [],
+        };
+        
+        setMessages(prev => {
+          const exists = prev.some(m => m.id === msg.id);
+          if (exists) return prev;
+          return [msg, ...prev];
+        });
+      }
+    };
+
+    // Pinned messages listeners
+    const onMessagePinned = ({ message }: any) => {
+      console.log('[Conversation] Message pinned:', message);
+      setPinnedMessages(prev => [message, ...prev].slice(0, 3));
+    };
+
+    const onMessageUnpinned = ({ messageId }: any) => {
+      console.log('[Conversation] Message unpinned:', messageId);
+      setPinnedMessages(prev => prev.filter(m => m._id !== messageId));
+    };
+
+    const onPinnedMessages = ({ data }: any) => {
+      console.log('[Conversation] Received pinned messages:', data);
+      setPinnedMessages(data);
+    };
+
+    // Reaction listener
+    const onReactionUpdated = ({ messageId, reactions }: any) => {
+      console.log('[Conversation] Reaction updated for message:', messageId);
+      setMessages(prev => prev.map(m =>
+        m.id === messageId ? { ...m, reactions } : m
+      ));
+    };
+
+    if (!socket) {
+      console.error('[Conversation] Socket is null, cannot setup listeners');
+      return;
+    }
+
     socket.on('getMessages', onGetMessages);
     socket.on('newMessage', onNewMessage);
     socket.on('newCallMessage', onNewCallMessage);
     socket.on('markAsRead', onMarkAsRead);
+    socket.on('voice:received', onVoiceReceived);
+    socket.on('message:pinned', onMessagePinned);
+    socket.on('message:unpinned', onMessageUnpinned);
+    socket.on('pinnedMessages', onPinnedMessages);
+    socket.on('reaction:updated', onReactionUpdated);
 
     console.log('[Conversation] Joining conversation room:', conversationId);
     socket.emit('joinConversation', conversationId);
     
     console.log('[Conversation] Requesting messages');
     socket.emit('getMessages', { conversationId });
+    
+    console.log('[Conversation] Requesting pinned messages');
+    socket.emit('getPinnedMessages', { conversationId });
     
     socket.emit('markAsRead', { conversationId });
 
@@ -389,6 +493,11 @@ const Conversation = () => {
       socket.off('newMessage', onNewMessage);
       socket.off('newCallMessage', onNewCallMessage);
       socket.off('markAsRead', onMarkAsRead);
+      socket.off('voice:received', onVoiceReceived);
+      socket.off('message:pinned', onMessagePinned);
+      socket.off('message:unpinned', onMessageUnpinned);
+      socket.off('pinnedMessages', onPinnedMessages);
+      socket.off('reaction:updated', onReactionUpdated);
     };
   }, [conversationId, currentUser?.id]);
 
@@ -406,8 +515,7 @@ const Conversation = () => {
                 size={40}
                 uri={conversationAvatar as string}
                 isGroup={rawType === "group"}
-                showOnline={isDirect}
-                isOnline={online}
+                {...(isDirect && { showOnline: true, isOnline: online })}
               />
               <Typo color={colors.white} fontWeight={"500"} size={22}>
                 {conversationName}
@@ -441,59 +549,146 @@ const Conversation = () => {
         />
 
         <View style={styles.content}>
+          {/* Pinned Messages Banner */}
+          <PinnedMessageBanner
+            pinnedMessages={pinnedMessages}
+            onJumpToMessage={(id) => {
+              // TODO: Scroll to message
+              console.log('[Conversation] Jump to message:', id);
+            }}
+            onUnpin={(id) => {
+              const socket = getSocket();
+              if (socket) {
+                socket.emit('message:unpin', {
+                  messageId: id,
+                  conversationId
+                });
+              }
+            }}
+            isAdmin={true}
+          />
+
           <FlatList
             data={messages}
             inverted={true}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.messagesContent}
             renderItem={({ item }) => (
-              <MessageItem item={item} isDirect={isDirect} />
+              <Pressable
+                onLongPress={(e) => {
+                  setReactionPicker({
+                    visible: true,
+                    messageId: item.id,
+                    position: {
+                      x: e.nativeEvent.pageX,
+                      y: e.nativeEvent.pageY
+                    },
+                  });
+                }}
+              >
+                {item.type === 'voice' ? (
+                  <VoiceMessageBubble
+                    audioUrl={item.audioUrl!}
+                    duration={item.audioDuration!}
+                    isMine={item.isMe || false}
+                  />
+                ) : (
+                  <MessageItem item={item} isDirect={isDirect} />
+                )}
+                
+                <ReactionBubble
+                  reactions={item.reactions || []}
+                  currentUserId={currentUser?.id || ''}
+                  onReact={(emoji) => {
+                    const socket = getSocket();
+                    if (socket) {
+                      socket.emit('reaction:add', {
+                        messageId: item.id,
+                        emoji,
+                        conversationId,
+                        userId: currentUser?.id,
+                      });
+                    }
+                  }}
+                />
+              </Pressable>
             )}
             keyExtractor={(item) => item.id}
           />
 
           <View style={styles.footer}>
-            <Input
-              value={message}
-              onChangeText={setMessage}
-              containerStyle={{
-                paddingLeft: spacingX._10,
-                paddingRight: scale(65),
-                borderWidth: 0,
-              }}
-              placeholder="Type message"
-              icon={
-                <TouchableOpacity style={styles.inputIcon} onPress={onPickFile}>
-                  {selectedFile && selectedFile.uri && (
-                    <Image
-                      source={{ uri: selectedFile.uri }}
-                      style={styles.selectedFile}
-                    />
-                  )}
-                  <Ionicons
-                    name="add"
-                    color={colors.black}
-                    size={verticalScale(22)}
-                  />
-                </TouchableOpacity>
-              }
+            {/* Voice Recorder */}
+            <VoiceRecorder
+              onVoiceSend={handleVoiceSend}
+              onCancel={() => console.log('[Conversation] Voice cancelled')}
+              isRecording={isRecordingVoice}
+              onRecordingChange={setIsRecordingVoice}
             />
+            
+            {/* Only show input and send button when NOT recording */}
+            {!isRecordingVoice && (
+              <>
+                <Input
+                  value={message}
+                  onChangeText={setMessage}
+                  containerStyle={{
+                    paddingLeft: spacingX._10,
+                    paddingRight: scale(65),
+                    borderWidth: 0,
+                  }}
+                  placeholder="Type message"
+                  icon={
+                    <TouchableOpacity style={styles.inputIcon} onPress={onPickFile}>
+                      {selectedFile && selectedFile.uri && (
+                        <Image
+                          source={{ uri: selectedFile.uri }}
+                          style={styles.selectedFile}
+                        />
+                      )}
+                      <Ionicons
+                        name="add"
+                        color={colors.black}
+                        size={verticalScale(22)}
+                      />
+                    </TouchableOpacity>
+                  }
+                />
 
-            <View style={styles.inputRightIcon}>
-              <TouchableOpacity style={styles.inputIcon} onPress={onSend}>
-                {loading ? (
-                  <ActivityIndicator size="small" color={colors.black} />
-                ) : (
-                  <Ionicons
-                    name="paper-plane"
-                    color={colors.black}
-                    size={verticalScale(22)}
-                  />
-                )}
-              </TouchableOpacity>
-            </View>
+                <View style={styles.inputRightIcon}>
+                  <TouchableOpacity style={styles.inputIcon} onPress={onSend}>
+                    {loading ? (
+                      <ActivityIndicator size="small" color={colors.black} />
+                    ) : (
+                      <Ionicons
+                        name="paper-plane"
+                        color={colors.black}
+                        size={verticalScale(22)}
+                      />
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
         </View>
+
+        {/* Emoji Reaction Picker */}
+        <EmojiReactionPicker
+          visible={reactionPicker.visible}
+          position={reactionPicker.position}
+          onReact={(emoji) => {
+            const socket = getSocket();
+            if (socket) {
+              socket.emit('reaction:add', {
+                messageId: reactionPicker.messageId,
+                emoji,
+                conversationId,
+                userId: currentUser?.id,
+              });
+            }
+          }}
+          onClose={() => setReactionPicker(p => ({ ...p, visible: false }))}
+        />
       </KeyboardAvoidingView>
     </ScreenWrapper>
   );

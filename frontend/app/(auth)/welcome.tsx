@@ -1,39 +1,37 @@
-import { Image, StyleSheet, View, TouchableOpacity } from 'react-native'
-import React from 'react'
+import { Image, StyleSheet, View, Animated } from 'react-native'
+import React, { useEffect, useRef } from 'react'
 import { useRouter } from 'expo-router'
 import ScreenWrapper from '@/components/ScreenWrapper'
 import { colors, spacingX, spacingY } from '@/constants/theme'
 import { verticalScale } from '@/utils/styling'
 import Typo from '@/components/Typo'
-import Animated, { FadeIn } from 'react-native-reanimated'
 import Button from '@/components/Button'
-import { Feather } from '@expo/vector-icons'
 
 const AnimatedImage = Animated.createAnimatedComponent(Image)
 
 const Welcome = () => {
   const router = useRouter()
+  const fadeAnim = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 700,
+      useNativeDriver: true,
+    }).start()
+  }, [])
 
   return (
     <ScreenWrapper showPattern={true}>
       <View style={styles.container}>
         <View style={styles.header}>
-          <View style={{alignItems:'center', flex: 1}}>
-            <Typo color={colors.white} size={35} fontWeight="900">
-              Sharingzi
-            </Typo>
-          </View>
-          <TouchableOpacity 
-            style={styles.settingsButton}
-            onPress={() => router.push('/(auth)/serverConfig')}
-          >
-            <Feather name="settings" size={24} color={colors.white} />
-          </TouchableOpacity>
+          <Typo color={colors.white} size={35} fontWeight="900">
+            Sharingzi
+          </Typo>
         </View>
         <AnimatedImage
-          entering={FadeIn.duration(700).springify()}
+          style={[styles.welcomeImage, { marginBottom: -20, opacity: fadeAnim }]}
           source={require('../../images/panda.png')}
-          style={[styles.welcomeImage, { marginBottom: -20 }]}
           resizeMode='contain'
         />
         <View>
@@ -68,12 +66,7 @@ const styles = StyleSheet.create({
     marginVertical: spacingY._10,
   },
   header: {
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  settingsButton: {
-    padding: spacingX._20,
   },
   background: {
     flex: 1,

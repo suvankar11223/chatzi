@@ -14,6 +14,32 @@ const messageSchema = new mongoose.Schema(
     },
     content: String,
     attachment: String,
+    type: {
+      type: String,
+      enum: ['text', 'image', 'voice'],
+      default: 'text',
+    },
+    // Voice message fields
+    audioUrl: String,
+    audioDuration: Number, // in seconds
+    // Pinned message
+    isPinned: {
+      type: Boolean,
+      default: false,
+    },
+    pinnedAt: Date,
+    pinnedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    // Reactions
+    reactions: [{
+      emoji: String,
+      users: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      }],
+    }],
     readBy: [{
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

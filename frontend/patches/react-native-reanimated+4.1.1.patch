@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-reanimated/android/build.gradle b/node_modules/react-native-reanimated/android/build.gradle
+index 1234567..abcdefg 100644
+--- a/node_modules/react-native-reanimated/android/build.gradle
++++ b/node_modules/react-native-reanimated/android/build.gradle
+@@ -50,7 +50,7 @@ def detectOSAwareHermesCommand(config) {
+ }
+ 
+ // Detect reanimated version from package.json
+-def detectReanimatedVersion() {
++def detectReanimatedVersion = {
+     def packageJson = file("$projectDir/../package.json")
+     def json = new groovy.json.JsonSlurper().parseText(packageJson.text)
+     return json.version

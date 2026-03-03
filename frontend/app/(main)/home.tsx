@@ -15,6 +15,11 @@ import { getSocket } from '@/socket/socket';
 import { fetchContactsFromAPI, fetchConversationsFromAPI } from '@/services/contactsService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { SuggestionCarousel } from '@/components/suggestions/SuggestionCarousel';
+import { PermissionGate } from '@/components/suggestions/PermissionGate';
+import { useMessageWatcher } from '@/hooks/suggestions/useMessageWatcher';
+import { useSuggestions } from '@/hooks/suggestions/useSuggestions';
+import { useSuggestionStore } from '@/services/suggestions/suggestionStore';
 
 const Home = () => {
   const router = useRouter();
@@ -25,24 +30,63 @@ const Home = () => {
   const [contacts, setContacts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [showPermission, setShowPermission] = useState(false);
+
+  // AI Suggestions
+  const { permissionGranted, setPermissionGranted, hydrate } = useSuggestionStore();
+  const { suggestions, isProcessing, handleAction, dismiss } = useSuggestions({
+    router,
+    onNavigateToChat: (chatId: string) => {
+      const conv = conversations.find(c => c._id === chatId);
+      if (conv) {
+        const isDirect = conv.type === 'direct';
+        const otherParticipant = isDirect ? conv.participants.find(p => p._id !== user?.id) : null;
+        router.push({
+          pathname: '/conversation',
+          params: {
+            id: conv._id,
+            name: isDirect ? otherParticipant?.name : conv.name,
+            avatar: isDirect ? otherParticipant?.avatar : conv.avatar,
+            type: conv.type,
+            participants: JSON.stringify(conv.participants),
+          },
+        });
+      }
+    },
+  });
+
+  // Start watching messages for AI suggestions
+  useMessageWatcher(conversations);
 
   // Instant load - load from cache immediately, then refresh
   useEffect(() => {
     console.log('[DEBUG] Home: Component mounted');
     
+    // Hydrate AI suggestions from storage
+    hydrate();
+    
+    // Show permission gate after 1s if not granted
+    const timer = setTimeout(() => {
+      if (!permissionGranted) setShowPermission(true);
+    }, 1000);
+    
     // Step 1: Load cached data INSTANTLY (no waiting)
     loadCachedData();
     
-    // Step 2: Fetch fresh data in background
-    fetchFreshData();
+    // Step 2: Fetch fresh data in background (wait for user to be loaded)
+    if (user) {
+      fetchFreshData();
+    }
     
     // Step 3: Setup socket for real-time updates
     setupSocketListeners();
 
     return () => {
+      clearTimeout(timer);
       cleanupSocketListeners();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]); // Re-run when user changes
 
   // Instant load from cache
   const loadCachedData = async () => {
@@ -67,7 +111,7 @@ const Home = () => {
     }
   };
 
-  // Fetch fresh data from API (non-blocking)
+  // Fetch fresh data from API (non-blocking) - OPTIMIZED for speed
   const fetchFreshData = async () => {
     try {
       const token = await AsyncStorage.getItem('token');
@@ -78,19 +122,21 @@ const Home = () => {
 
       const { fetchContactsFromAPI, fetchConversationsFromAPI } = await import('@/services/contactsService');
       
-      // Fetch in parallel
-      const [apiContacts, apiConversations] = await Promise.all([
-        fetchContactsFromAPI(token, 1), // 1 retry only for speed
-        fetchConversationsFromAPI(token)
-      ]);
-
-      console.log('[DEBUG] Home: Fresh data -', apiContacts?.length || 0, 'contacts,', apiConversations?.length || 0, 'conversations');
-
+      // Fetch contacts FIRST (priority) then conversations
+      console.log('[DEBUG] Home: Fetching contacts from API...');
+      const apiContacts = await fetchContactsFromAPI(token, 1);
+      
       if (apiContacts && apiContacts.length > 0) {
+        console.log('[DEBUG] Home: Got', apiContacts.length, 'contacts from API');
         setContacts(apiContacts);
       }
-
+      
+      // Then fetch conversations
+      console.log('[DEBUG] Home: Fetching conversations from API...');
+      const apiConversations = await fetchConversationsFromAPI(token);
+      
       if (apiConversations && apiConversations.length > 0) {
+        console.log('[DEBUG] Home: Got', apiConversations.length, 'conversations from API');
         setConversations(apiConversations);
       }
     } catch (error) {
@@ -135,6 +181,18 @@ const Home = () => {
           setConversations(prev => prev.map(c => c._id === res.data.conversationId ? { ...c, unreadCount: 0 } : c));
         }
       });
+      
+      // Listen for new user registrations
+      socket.on('newUserRegistered', (newUser: any) => {
+        console.log('[DEBUG] Home: New user registered:', newUser);
+        // Add new user to contacts if not already there
+        setContacts(prev => {
+          const exists = prev.some(c => c._id === newUser._id);
+          if (exists) return prev;
+          console.log('[DEBUG] Home: Adding new user to contacts:', newUser.name);
+          return [...prev, newUser];
+        });
+      });
     }
   };
 
@@ -143,6 +201,11 @@ const Home = () => {
     newConversation(newConversationHandler, true);
     getContacts(processContacts, true);
     newMessage(() => {}, true);
+    
+    const socket = getSocket();
+    if (socket) {
+      socket.off('newUserRegistered');
+    }
   };
 
   const processContacts = (res: ResponseProps) => {
@@ -150,6 +213,10 @@ const Home = () => {
     if (res.success) {
       setContacts(res.data || []);
       console.log('[DEBUG] Loaded', (res.data || []).length, 'contacts via socket');
+      if (res.data && res.data.length > 0) {
+        console.log('[DEBUG] Contact names:', res.data.map((c: any) => c.name).join(', '));
+        console.log('[DEBUG] Contact IDs:', res.data.map((c: any) => c._id).join(', '));
+      }
     }
   };
 
@@ -215,18 +282,37 @@ const Home = () => {
       setConversations((prev) => {
         const exists = prev.some(conv => conv._id === res.data._id);
         if (exists) {
-          console.log('[DEBUG] Conversation already exists, not adding');
-          return prev;
+          console.log('[DEBUG] Conversation already exists, updating it');
+          // Update existing conversation
+          return prev.map(conv => 
+            conv._id === res.data._id ? res.data : conv
+          );
         }
         console.log('[DEBUG] Adding new conversation:', res.data);
+        console.log('[DEBUG] Conversation type:', res.data.type);
+        console.log('[DEBUG] Conversation name:', res.data.name);
         return [res.data, ...prev];
       });
+      
+      // If it's a group, automatically switch to Groups tab
+      if (res.data.type === 'group') {
+        console.log('[DEBUG] New group created, switching to Groups tab');
+        setSelectedTab('group');
+      }
     }
   };
 
   const refreshConversations = async () => {
     console.log('[DEBUG] Home: Manual refresh triggered');
     setLoading(true);
+    
+    // Check if user is authenticated before attempting any operations
+    const token = await AsyncStorage.getItem('token');
+    if (!token) {
+      console.log('[DEBUG] Home: No token, skipping refresh');
+      setLoading(false);
+      return;
+    }
     
     // Always try API first (more reliable)
     await loadContactsFromAPI();
@@ -255,6 +341,14 @@ const Home = () => {
 
   const onRefresh = async () => {
     console.log('[DEBUG] Home: Pull-to-refresh triggered');
+    
+    // Check if user is authenticated
+    const token = await AsyncStorage.getItem('token');
+    if (!token) {
+      console.log('[DEBUG] Home: No token, skipping refresh');
+      return;
+    }
+    
     setRefreshing(true);
     await loadContactsFromAPI();
     
@@ -432,12 +526,23 @@ const Home = () => {
   );
 
   // Debug logging
+  console.log('[DEBUG] Total contacts:', contacts.length);
+  console.log('[DEBUG] Total conversations:', conversations.length);
+  console.log('[DEBUG] Direct conversations:', directConversations.length);
+  if (contacts.length > 0) {
+    console.log('[DEBUG] All contact names:', contacts.map(c => c.name).join(', '));
+  }
   if (contactsWithoutConversation.length > 0) {
     console.log('[DEBUG] Contacts without conversation:', contactsWithoutConversation.map(c => ({ id: c._id, name: c.name, email: c.email })));
+  } else {
+    console.log('[DEBUG] No contacts without conversation (all have conversations or no contacts loaded)');
   }
 
-  // Final merged list: active chats first (sorted), then unused contacts
-  const directListData = [...directConversations, ...contactsWithoutConversation];
+  // Show ALL contacts without conversations (not just first one!)
+  const contactsToShow = contactsWithoutConversation;
+
+  // Final merged list: active chats first (sorted), then ALL unused contacts
+  const directListData = [...directConversations, ...contactsToShow];
 
 
 
@@ -457,10 +562,10 @@ const Home = () => {
       return (
         <View style={styles.centerContainer}>
           <Typo size={16} color={colors.neutral600} style={{ textAlign: 'center' }}>
-            {selectedTab === 'direct' ? 'No other users found' : 'No groups yet'}
+            {selectedTab === 'direct' ? 'No conversations yet' : 'No groups yet'}
           </Typo>
           <Typo size={14} color={colors.neutral500} style={{ textAlign: 'center', marginTop: 8 }}>
-            {selectedTab === 'direct' ? 'Register another account to chat' : ''}
+            {selectedTab === 'direct' ? 'Start chatting with someone!' : 'Create a group to get started'}
           </Typo>
           <TouchableOpacity
             style={styles.retryButton}
@@ -481,7 +586,10 @@ const Home = () => {
       return (
         <View style={styles.centerContainer}>
           <Typo size={16} color={colors.neutral600}>
-            {selectedTab === 'direct' ? 'No users available' : 'No groups yet'}
+            {selectedTab === 'direct' ? 'No conversations yet' : 'No groups yet'}
+          </Typo>
+          <Typo size={14} color={colors.neutral500} style={{ textAlign: 'center', marginTop: 8 }}>
+            {selectedTab === 'direct' ? 'Tap on a contact below to start chatting' : 'Tap + to create a group'}
           </Typo>
         </View>
       );
@@ -491,6 +599,14 @@ const Home = () => {
       <FlatList
         data={listData}
         keyExtractor={(item: any) => item._id}
+        ListHeaderComponent={
+          <SuggestionCarousel
+            suggestions={suggestions}
+            isProcessing={isProcessing}
+            onAction={handleAction}
+            onDismiss={dismiss}
+          />
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -624,6 +740,16 @@ const Home = () => {
             <Feather name="plus" size={28} color={colors.white} />
           </TouchableOpacity>
         )}
+
+        {/* AI Suggestions Permission Gate */}
+        <PermissionGate
+          visible={showPermission && !permissionGranted}
+          onGrant={() => {
+            setPermissionGranted(true);
+            setShowPermission(false);
+          }}
+          onDeny={() => setShowPermission(false)}
+        />
       </View>
     </ScreenWrapper>
   );

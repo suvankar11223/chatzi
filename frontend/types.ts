@@ -58,9 +58,11 @@ export type AuthContextProps = {
     name: string,
     avatar?: string
   ) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   updateToken: (token: string) => Promise<void>;
   refreshUser: (userData: UserProps) => void;
+  refreshToken?: () => Promise<string | null>;
 };
 
 export type ScreenWrapperProps = {
@@ -144,6 +146,9 @@ export type MessageProps = {
   };
   content: string;
   attachment?: string | null;
+  type?: 'text' | 'image' | 'voice';
+  audioUrl?: string;
+  audioDuration?: number;
   isMe?: boolean;
   createdAt: string;
   isCallMessage?: boolean;
@@ -152,7 +157,15 @@ export type MessageProps = {
     duration?: number;
     status?: 'completed' | 'missed' | 'declined';
   };
+  reactions?: {
+    emoji: string;
+    count: number;
+    users: string[];
+  }[];
 };
+
+// Alias for MessageType (used in Conversation screen)
+export type MessageType = MessageProps;
 
 // Call types
 export type CallType = "audio" | "video";

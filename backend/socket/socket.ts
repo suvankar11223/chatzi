@@ -42,9 +42,7 @@ export const initializeSocket = (server: Server): SocketIOServer => {
     try {
       // Try Clerk token verification first
       try {
-        const payload = await clerkClient.verifyToken(token, {
-          secretKey: process.env.CLERK_SECRET_KEY
-        });
+        const payload = await clerkClient.verifyToken(token);
         
         if (payload && payload.sub) {
           // Get user from Clerk
@@ -63,9 +61,13 @@ export const initializeSocket = (server: Server): SocketIOServer => {
               clerkId: clerkUser.id,
               name: clerkUser.firstName || clerkUser.username || 'User',
               email: clerkUser.emailAddresses[0]?.emailAddress || '',
-              avatar: clerkUser.imageUrl || null,
+              avatar: clerkUser.imageUrl || clerkUser.profileImageUrl || null,
             });
             console.log('[Socket] Created new user from Clerk:', mongoUser._id);
+            console.log('[Socket] User avatar:', mongoUser.avatar);
+            
+            // Store io instance globally for broadcasting
+            (global as any).io = io;
           }
           
           (socket as any).userId = mongoUser._id.toString();
@@ -93,6 +95,7 @@ export const initializeSocket = (server: Server): SocketIOServer => {
   io.on('connection', async (socket: Socket) => {
     const userId = (socket as any).userId;
     const userEmail = (socket as any).userEmail;
+    const userName = (socket as any).userName;
 
     console.log(`[Socket] User connected - ${userEmail} (${socket.id})`);
 
@@ -101,6 +104,22 @@ export const initializeSocket = (server: Server): SocketIOServer => {
       onlineUsers.set(userId, socket.id);
       socket.broadcast.emit('userOnline', { userId });
       console.log(`[Online] User ${userId} ONLINE. Total: ${onlineUsers.size}`);
+      
+      // Broadcast user info to all clients (for new users)
+      try {
+        const mongoUser = await User.findById(userId);
+        if (mongoUser) {
+          socket.broadcast.emit('newUserRegistered', {
+            _id: mongoUser._id,
+            name: mongoUser.name,
+            email: mongoUser.email,
+            avatar: mongoUser.avatar,
+          });
+          console.log('[Socket] Broadcasted user to all clients:', mongoUser.name);
+        }
+      } catch (error) {
+        console.error('[Socket] Error broadcasting user:', error);
+      }
     }
 
     // Send current online users to newly connected user

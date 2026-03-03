@@ -288,6 +288,10 @@ export function registerChatEvents(io: SocketIOServer, socket: Socket) {
         id: message._id,
         content: message.content,
         attachment: message.attachment,
+        type: message.type || 'text',
+        audioUrl: message.audioUrl,
+        audioDuration: message.audioDuration,
+        reactions: message.reactions || [],
         createdAt: message.createdAt,
         isCallMessage: message.isCallMessage,
         callData: message.callData,
@@ -383,6 +387,295 @@ export function registerChatEvents(io: SocketIOServer, socket: Socket) {
       socket.emit("markAsRead", {
         success: false,
         msg: "Failed to mark as read: " + error.message,
+      });
+    }
+  });
+
+  // Voice message handler
+  socket.on("voice:send", async (data) => {
+    console.log('=== VOICE MESSAGE EVENT ===');
+    console.log('From:', (socket as any).userEmail);
+    console.log('Audio URL:', data.audioUrl);
+    console.log('Duration:', data.duration);
+    
+    try {
+      if (!data.conversationId || !data.senderId || !data.audioUrl) {
+        throw new Error('Missing required voice message data');
+      }
+
+      // Create voice message in database
+      const message = await Message.create({
+        conversationId: data.conversationId,
+        senderId: data.senderId,
+        content: '', // Empty content for voice messages
+        type: 'voice',
+        audioUrl: data.audioUrl,
+        audioDuration: data.duration,
+        readBy: [data.senderId],
+      });
+
+      console.log('✓ Voice message saved:', message._id);
+
+      // Get sender info
+      const sender = await Message.findById(message._id).populate('senderId', 'name avatar');
+      
+      const messageData = {
+        success: true,
+        data: {
+          id: message._id.toString(),
+          content: '',
+          type: 'voice',
+          audioUrl: data.audioUrl,
+          audioDuration: data.duration,
+          sender: {
+            id: data.senderId,
+            name: (sender as any)?.senderId?.name || 'User',
+            avatar: (sender as any)?.senderId?.avatar || '',
+          },
+          createdAt: message.createdAt.toISOString(),
+          conversationId: data.conversationId,
+        },
+      };
+
+      // Emit to conversation room
+      io.to(data.conversationId).emit("voice:received", messageData);
+      console.log('✓ Voice message emitted to room:', data.conversationId);
+
+      // Update conversation
+      Conversation.findById(data.conversationId).then(async (conversation) => {
+        if (!conversation) return;
+
+        const unreadCount = conversation.unreadCount || new Map();
+        conversation.participants.forEach((participantId: any) => {
+          const participantIdStr = participantId.toString();
+          if (participantIdStr !== data.senderId) {
+            const currentCount = unreadCount.get(participantIdStr) || 0;
+            unreadCount.set(participantIdStr, currentCount + 1);
+          }
+        });
+
+        conversation.lastMessage = message._id as any;
+        conversation.unreadCount = unreadCount;
+        conversation.updatedAt = new Date();
+        await conversation.save();
+      }).catch(err => console.error('Error updating conversation:', err));
+
+    } catch (error: any) {
+      console.log('=== VOICE MESSAGE ERROR ===');
+      console.log(error.message);
+      socket.emit("voice:error", {
+        success: false,
+        msg: "Failed to send voice message: " + error.message,
+      });
+    }
+  });
+
+  // Pin message handler
+  socket.on("message:pin", async (data) => {
+    console.log('=== PIN MESSAGE EVENT ===');
+    console.log('Message ID:', data.messageId);
+    
+    try {
+      const userId = (socket as any).userId;
+      if (!userId) {
+        throw new Error('Unauthorized');
+      }
+
+      const message = await Message.findById(data.messageId)
+        .populate('senderId', 'name avatar');
+      
+      if (!message) {
+        throw new Error('Message not found');
+      }
+
+      message.isPinned = true;
+      message.pinnedAt = new Date();
+      message.pinnedBy = userId;
+      await message.save();
+
+      const pinnedMessageData = {
+        _id: message._id,
+        content: message.content,
+        type: message.type,
+        audioUrl: message.audioUrl,
+        attachment: message.attachment,
+        sender: {
+          id: (message.senderId as any)._id,
+          name: (message.senderId as any).name,
+          avatar: (message.senderId as any).avatar,
+        },
+      };
+
+      io.to(data.conversationId).emit("message:pinned", {
+        success: true,
+        message: pinnedMessageData,
+      });
+
+      console.log('✓ Message pinned:', message._id);
+
+    } catch (error: any) {
+      console.log('=== PIN MESSAGE ERROR ===');
+      console.log(error.message);
+      socket.emit("message:pin:error", {
+        success: false,
+        msg: error.message,
+      });
+    }
+  });
+
+  // Unpin message handler
+  socket.on("message:unpin", async (data) => {
+    console.log('=== UNPIN MESSAGE EVENT ===');
+    console.log('Message ID:', data.messageId);
+    
+    try {
+      const message = await Message.findById(data.messageId);
+      
+      if (!message) {
+        throw new Error('Message not found');
+      }
+
+      message.isPinned = false;
+      message.pinnedAt = undefined;
+      message.pinnedBy = undefined;
+      await message.save();
+
+      io.to(data.conversationId).emit("message:unpinned", {
+        success: true,
+        messageId: data.messageId,
+      });
+
+      console.log('✓ Message unpinned:', message._id);
+
+    } catch (error: any) {
+      console.log('=== UNPIN MESSAGE ERROR ===');
+      console.log(error.message);
+      socket.emit("message:unpin:error", {
+        success: false,
+        msg: error.message,
+      });
+    }
+  });
+
+  // Add reaction handler
+  socket.on("reaction:add", async (data) => {
+    console.log('=== ADD REACTION EVENT ===');
+    console.log('Message ID:', data.messageId);
+    console.log('Emoji:', data.emoji);
+    console.log('User ID:', data.userId);
+    
+    try {
+      const message = await Message.findById(data.messageId);
+      
+      if (!message) {
+        throw new Error('Message not found');
+      }
+
+      // Initialize reactions array if it doesn't exist
+      if (!message.reactions || !Array.isArray(message.reactions)) {
+        message.reactions = [] as any;
+      }
+
+      // Find existing reaction with this emoji
+      const existingReactionIndex = message.reactions.findIndex(
+        (r: any) => r.emoji === data.emoji
+      );
+
+      if (existingReactionIndex > -1) {
+        // Reaction exists
+        const existingReaction = message.reactions[existingReactionIndex];
+        const userIndex = existingReaction.users.findIndex(
+          (id: any) => id.toString() === data.userId
+        );
+
+        if (userIndex > -1) {
+          // Remove reaction (toggle off)
+          existingReaction.users.splice(userIndex, 1);
+          
+          // Remove emoji if no users left
+          if (existingReaction.users.length === 0) {
+            message.reactions.splice(existingReactionIndex, 1);
+          }
+        } else {
+          // Add user to existing reaction
+          existingReaction.users.push(data.userId);
+        }
+      } else {
+        // Create new reaction
+        (message.reactions as any).push({
+          emoji: data.emoji,
+          users: [data.userId],
+        });
+      }
+
+      await message.save();
+
+      // Format reactions for client
+      const formattedReactions = message.reactions.map((r: any) => ({
+        emoji: r.emoji,
+        count: r.users.length,
+        users: r.users.map((id: any) => id.toString()),
+      }));
+
+      io.to(data.conversationId).emit("reaction:updated", {
+        success: true,
+        messageId: data.messageId,
+        reactions: formattedReactions,
+      });
+
+      console.log('✓ Reaction updated:', data.emoji);
+
+    } catch (error: any) {
+      console.log('=== ADD REACTION ERROR ===');
+      console.log(error.message);
+      socket.emit("reaction:error", {
+        success: false,
+        msg: error.message,
+      });
+    }
+  });
+
+  // Get pinned messages
+  socket.on("getPinnedMessages", async (data: { conversationId: string }) => {
+    console.log('=== GET PINNED MESSAGES EVENT ===');
+    console.log('Conversation ID:', data.conversationId);
+    
+    try {
+      const pinnedMessages = await Message.find({
+        conversationId: data.conversationId,
+        isPinned: true,
+      })
+        .sort({ pinnedAt: -1 })
+        .limit(3)
+        .populate('senderId', 'name avatar')
+        .lean();
+
+      const formattedMessages = pinnedMessages.map((msg: any) => ({
+        _id: msg._id,
+        content: msg.content,
+        type: msg.type,
+        audioUrl: msg.audioUrl,
+        attachment: msg.attachment,
+        sender: {
+          id: msg.senderId._id,
+          name: msg.senderId.name,
+          avatar: msg.senderId.avatar,
+        },
+      }));
+
+      socket.emit("pinnedMessages", {
+        success: true,
+        data: formattedMessages,
+      });
+
+      console.log('✓ Sent', formattedMessages.length, 'pinned messages');
+
+    } catch (error: any) {
+      console.log('=== GET PINNED MESSAGES ERROR ===');
+      console.log(error.message);
+      socket.emit("pinnedMessages:error", {
+        success: false,
+        msg: error.message,
       });
     }
   });

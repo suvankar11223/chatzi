@@ -1,8 +1,34 @@
 import React, { useEffect } from 'react'
 import { Stack, useRouter, usePathname } from 'expo-router'
+import { ClerkProvider, ClerkLoaded } from '@clerk/clerk-expo'
+import * as SecureStore from 'expo-secure-store'
 import { AuthProvider, useAuth } from '@/context/authContext'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { getSocket } from '@/socket/socket'
+
+const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!
+
+if (!publishableKey) {
+  throw new Error('Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY in .env')
+}
+
+// Token cache for Clerk
+const tokenCache = {
+  async getToken(key: string) {
+    try {
+      return SecureStore.getItemAsync(key)
+    } catch (err) {
+      return null
+    }
+  },
+  async saveToken(key: string, value: string) {
+    try {
+      return SecureStore.setItemAsync(key, value)
+    } catch (err) {
+      return
+    }
+  },
+}
 
 const InitialLayout = () => {
   const router = useRouter();
@@ -89,9 +115,13 @@ const InitialLayout = () => {
 
 const RootLayout = () => {
   return (
-    <AuthProvider>
-      <InitialLayout />
-    </AuthProvider>
+    <ClerkProvider tokenCache={tokenCache} publishableKey={publishableKey}>
+      <ClerkLoaded>
+        <AuthProvider>
+          <InitialLayout />
+        </AuthProvider>
+      </ClerkLoaded>
+    </ClerkProvider>
   );
 };
 

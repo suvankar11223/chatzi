@@ -32,7 +32,7 @@ const MessageItem = ({
     return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
   };
 
-  // Render call message
+  // Render call message - compact WhatsApp style
   if (item.isCallMessage && item.callData) {
     const { type, duration, status } = item.callData;
     const isVideo = type === 'video';
@@ -45,48 +45,40 @@ const MessageItem = ({
           <Avatar size={30} uri={item.sender.avatar} />
         )}
         
-        <View>
-          <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.theirBubble]}>
-            {!isMe && !isDirect && (
-              <Typo color={colors.neutral900} fontWeight={"600"} size={13}>
-                {item.sender.name}
-              </Typo>
-            )}
+        <View style={[
+          styles.callMessageBox,
+          isMe ? styles.myCallBox : styles.theirCallBox
+        ]}>
+          <View style={styles.callRow}>
+            <Ionicons 
+              name={isVideo ? "videocam" : "call"} 
+              size={16} 
+              color={isMissed ? colors.rose : isMe ? '#0084ff' : '#34b7f1'} 
+            />
+            <Ionicons 
+              name={isMe ? "arrow-up" : "arrow-down"} 
+              size={12} 
+              color={isMissed ? colors.rose : isMe ? '#0084ff' : '#34b7f1'}
+              style={{ marginLeft: -2 }} 
+            />
             
-            <View style={styles.callContent}>
-              <View style={styles.callIconWrapper}>
-                <Ionicons 
-                  name={isVideo ? "videocam" : "call"} 
-                  size={20} 
-                  color={isMissed ? colors.rose : colors.neutral700} 
-                />
-                <Ionicons 
-                  name={isMe ? "arrow-up" : "arrow-down"} 
-                  size={14} 
-                  color={isMissed ? colors.rose : colors.neutral700}
-                  style={{ marginLeft: -2 }} 
-                />
-              </View>
-              
-              <View style={styles.callTextWrapper}>
-                <Typo 
-                  color={isMissed ? colors.rose : colors.neutral900} 
-                  fontWeight="500" 
-                  size={14}
-                >
-                  {isVideo ? 'Video call' : 'Voice call'}
-                </Typo>
-                
-                <Typo color={colors.neutral600} size={13}>
-                  {isMissed ? 'Missed call' : isDeclined ? 'Call declined' : formatDuration(duration || 0)}
-                </Typo>
-              </View>
-            </View>
-            
-            <Typo color={colors.neutral500} size={11} style={{ marginTop: spacingY._5 }}>
-              {formattedDate}
+            <Typo 
+              color={isMissed ? colors.rose : colors.neutral900} 
+              fontWeight="500" 
+              size={13}
+              style={{ marginLeft: 6 }}
+            >
+              {isVideo ? 'Video call' : 'Voice call'}
             </Typo>
           </View>
+          
+          <Typo color={colors.neutral600} size={12} style={{ marginTop: 2 }}>
+            {isMissed ? 'Missed' : isDeclined ? 'Declined' : formatDuration(duration || 0)}
+          </Typo>
+          
+          <Typo color={colors.neutral500} size={10} style={{ marginTop: 4 }}>
+            {formattedDate}
+          </Typo>
         </View>
       </View>
     );
@@ -249,20 +241,25 @@ const styles = StyleSheet.create({
     borderRadius: radius._15,
   },
 
-  // Call message styles
-  callContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacingX._10,
+  // Call message styles - compact WhatsApp-like design
+  callMessageBox: {
+    paddingHorizontal: spacingX._12,
+    paddingVertical: spacingY._10,
+    borderRadius: radius._12,
+    minWidth: 140,
+    maxWidth: 200,
   },
 
-  callIconWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  myCallBox: {
+    backgroundColor: '#e3f2fd', // Light blue for outgoing
   },
 
-  callTextWrapper: {
-    flex: 1,
-    gap: spacingY._5,
+  theirCallBox: {
+    backgroundColor: '#fce4ec', // Light pink for incoming
+  },
+
+  callRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 });

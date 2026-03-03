@@ -41,7 +41,7 @@ export const warmUpServer = async (): Promise<void> => {
 
     // Reset flag after 10 mins so it warms up again if needed
     setTimeout(() => { serverWarmedUp = false; }, 10 * 60 * 1000);
-  } catch (e) {
+  } catch {
     // Even if ping fails, continue — server might still respond to API calls
     console.log('[ContactsService] Warm-up ping failed, continuing anyway');
   }
@@ -59,7 +59,7 @@ export const requestContactsPermission = async (): Promise<boolean> => {
       return false;
     }
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 };
@@ -145,8 +145,15 @@ export const fetchContactsFromAPI = async (token: string, retries = 2): Promise<
   isLoadingContacts = true;
 
   try {
+    // Try to get fresh token from AsyncStorage (updated by auth context)
+    const freshToken = await AsyncStorage.getItem('token') || token;
+    console.log('[ContactsService] Using token:', freshToken ? `${freshToken.substring(0, 20)}...` : 'missing');
+    
     const cached = await getCachedContacts();
     console.log('[ContactsService] Cached contacts:', cached?.length || 0);
+    if (cached && cached.length > 0) {
+      console.log('[ContactsService] Cached contact names:', cached.map((c: any) => c.name).join(', '));
+    }
 
     // ✅ Warm up server before API call
     await warmUpServer();
@@ -166,7 +173,7 @@ export const fetchContactsFromAPI = async (token: string, retries = 2): Promise<
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${freshToken}`,
           },
           signal: controller.signal,
         });
@@ -174,15 +181,34 @@ export const fetchContactsFromAPI = async (token: string, retries = 2): Promise<
         clearTimeout(timeoutId);
 
         console.log('[ContactsService] Response status:', response.status);
+        console.log('[ContactsService] Response headers:', JSON.stringify(Object.fromEntries(response.headers.entries())));
 
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (response.status === 401) {
+          console.log('[ContactsService] 401 Unauthorized - token expired');
+          const errorText = await response.text();
+          console.log('[ContactsService] Error response:', errorText);
+          // Token expired, return cached and let auth context refresh
+          isLoadingContacts = false;
+          return cached || [];
+        }
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.log('[ContactsService] Error response:', errorText);
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
 
         const data = await response.json();
+        console.log('[ContactsService] Response data:', JSON.stringify(data).substring(0, 200));
 
         if (data.success && data.data) {
           await cacheContacts(data.data);
           isLoadingContacts = false;
-          console.log('[ContactsService] Got', data.data.length, 'contacts');
+          console.log('[ContactsService] Got', data.data.length, 'contacts from API');
+          if (data.data.length > 0) {
+            console.log('[ContactsService] Contact names:', data.data.map((c: any) => c.name).join(', '));
+            console.log('[ContactsService] Contact IDs:', data.data.map((c: any) => c._id).join(', '));
+          }
           return data.data;
         }
 

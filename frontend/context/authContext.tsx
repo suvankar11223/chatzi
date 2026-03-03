@@ -1,19 +1,19 @@
-import { AuthContextProps, DecodedTokenProps, UserProps } from "@/types";
+import { AuthContextProps, UserProps } from "@/types";
 import { createContext, ReactNode, useState, useEffect, useContext } from "react";
 import { useRouter, useSegments } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { jwtDecode } from "jwt-decode";
-import * as authService from "@/services/authService";
+import { useUser, useAuth as useClerkAuth } from '@clerk/clerk-expo';
 import { connectSocket, disconnectSocket } from "@/socket/socket";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const AuthContext = createContext<AuthContextProps>({
   token: null,
   user: null,
-  signIn: async (email: string, password: string) => {},
-  signUp: async (email: string, password: string, name: string, avatar?: string) => {},
+  signIn: async (_email: string, _password: string) => {},
+  signUp: async (_email: string, _password: string, _name: string, _avatar?: string) => {},
+  signInWithGoogle: async () => {},
   signOut: async () => {},
-  updateToken: async (token: string) => {},
-  refreshUser: (userData: UserProps) => {},
+  updateToken: async (_token: string) => {},
+  refreshUser: (_userData: UserProps) => {},
 });
 
 export const useAuth = () => {
@@ -25,16 +25,112 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
+  const { user: clerkUser, isLoaded: isUserLoaded } = useUser();
+  const { getToken, signOut: clerkSignOut } = useClerkAuth();
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<UserProps | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [profileFetched, setProfileFetched] = useState(false); // Track if profile was fetched
   const router = useRouter();
   const segments = useSegments();
 
-  // Load token on app start
+  // Load Clerk user and token - only fetch profile once
   useEffect(() => {
-    loadToken();
-  }, []);
+    if (!isUserLoaded) return;
+
+    const loadClerkData = async () => {
+      try {
+        if (clerkUser) {
+          // Always get fresh token (Google OAuth tokens expire faster)
+          const clerkToken = await getToken({ skipCache: true });
+          
+          if (clerkToken) {
+            console.log('[Auth] Got fresh Clerk token');
+            setToken(clerkToken);
+            
+            // Store token in AsyncStorage FIRST before fetching profile
+            await AsyncStorage.setItem('token', clerkToken);
+            console.log('[Auth] Token stored in AsyncStorage');
+            
+            // Only fetch profile if not already fetched
+            if (!profileFetched) {
+              // Fetch user profile from backend to get MongoDB ID
+              try {
+                const { getApiUrl } = await import('@/constants');
+                const apiUrl = await getApiUrl();
+                console.log('[Auth] Fetching profile from:', `${apiUrl}/user/profile`);
+                
+                const response = await fetch(`${apiUrl}/user/profile`, {
+                  headers: {
+                    'Authorization': `Bearer ${clerkToken}`,
+                  },
+                });
+                
+                if (response.ok) {
+                  const result = await response.json();
+                  if (result.success && result.data) {
+                    // Use MongoDB user data
+                    const userObj: UserProps = {
+                      id: result.data.id, // MongoDB ObjectId
+                      email: result.data.email,
+                      name: result.data.name,
+                      avatar: result.data.avatar || clerkUser.imageUrl || undefined,
+                    };
+                    setUser(userObj);
+                    setProfileFetched(true);
+                    console.log('[Auth] User profile loaded from backend:', userObj.id);
+                    console.log('[Auth] User name:', userObj.name);
+                    console.log('[Auth] User avatar:', userObj.avatar);
+                  } else {
+                    throw new Error('Failed to get user profile');
+                  }
+                } else {
+                  const errorText = await response.text();
+                  console.error('[Auth] Profile fetch failed:', response.status, errorText);
+                  throw new Error('Profile fetch failed');
+                }
+              } catch (profileError) {
+                console.error('[Auth] Error fetching profile, using Clerk data:', profileError);
+                // Fallback to Clerk data
+                const userObj: UserProps = {
+                  id: clerkUser.id,
+                  email: clerkUser.primaryEmailAddress?.emailAddress || '',
+                  name: clerkUser.firstName || clerkUser.username || 'User',
+                  avatar: clerkUser.imageUrl || undefined,
+                };
+                setUser(userObj);
+                setProfileFetched(true);
+              }
+            }
+            
+            // Try to connect socket (don't block)
+            connectSocket().catch((err) => {
+              console.error('[Auth] Socket connection failed:', err);
+            });
+          }
+        } else {
+          console.log('[Auth] No Clerk user, clearing state');
+          setToken(null);
+          setUser(null);
+          setProfileFetched(false);
+          // Clear token from AsyncStorage when logged out
+          await AsyncStorage.removeItem('token');
+        }
+      } catch (error) {
+        console.error('[Auth] Error loading Clerk data:', error);
+        setToken(null);
+        setUser(null);
+        setProfileFetched(false);
+        await AsyncStorage.removeItem('token');
+      } finally {
+        if (!isInitialized) {
+          setIsInitialized(true);
+        }
+      }
+    };
+
+    loadClerkData();
+  }, [clerkUser, isUserLoaded, profileFetched, getToken, isInitialized]);
 
   // Handle navigation based on auth state
   useEffect(() => {
@@ -50,160 +146,71 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } else if (token && inAuthGroup) {
       router.replace('/(main)/home');
     }
-  }, [token, segments, isInitialized]);
+  }, [token, segments, isInitialized, router]);
 
-  const loadToken = async () => {
-    try {
-      const storedToken = await AsyncStorage.getItem("token");
-      
-      if (storedToken) {
-        const decoded = jwtDecode<DecodedTokenProps>(storedToken);
-        
-        const currentTime = Date.now() / 1000;
-        if (decoded.exp && decoded.exp < currentTime) {
-          await AsyncStorage.removeItem("token");
-          setIsInitialized(true);
-          return;
-        }
-
-        setToken(storedToken);
-        
-        const storedUserData = await AsyncStorage.getItem("userData");
-        let userObj: UserProps;
-        
-        if (storedUserData) {
-          userObj = JSON.parse(storedUserData);
-        } else {
-          userObj = {
-            id: decoded.userId,
-            email: decoded.email,
-            name: decoded.name,
-          };
-        }
-        
-        setUser(userObj);
-        
-        // Try to connect socket (don't block)
-        connectSocket().catch(() => {});
-      }
-    } catch {
-      await AsyncStorage.removeItem("token");
-    } finally {
-      setIsInitialized(true);
-    }
+  const updateToken = async (newToken: string) => {
+    setToken(newToken);
   };
 
-  const updateToken = async (token: string) => {
-    if (token) {
-      setToken(token);
-      await AsyncStorage.setItem("token", token);
-      const decoded = jwtDecode<DecodedTokenProps>(token);
-      
-      const userObj: UserProps = {
-        id: decoded.userId,
-        email: decoded.email,
-        name: decoded.name,
-      };
-      
-      setUser(userObj);
-      await AsyncStorage.setItem("userData", JSON.stringify(userObj));
-    }
-  };
-
-  const signIn = async (email: string, password: string) => {
-    const response = await authService.login(email, password);
-    if (response.token) {
-      await updateToken(response.token);
-      
-      // Try to connect socket (don't block)
-      connectSocket().catch(() => {});
-      
-      // Prefetch data IMMEDIATELY (no delay) for instant home screen load
-      setTimeout(async () => {
-        try {
-          const { fetchContactsFromAPI, fetchConversationsFromAPI } = await import("@/services/contactsService");
-          const { cacheContacts, cacheConversations } = await import("@/utils/network");
-          
-          const [contacts, conversations] = await Promise.all([
-            fetchContactsFromAPI(response.token, 1),
-            fetchConversationsFromAPI(response.token)
-          ]);
-          
-          // Cache immediately for instant load on home screen
-          if (contacts.length > 0) {
-            await cacheContacts(contacts);
-          }
-          if (conversations.length > 0) {
-            await cacheConversations(conversations);
-          }
-          
-          console.log('[Auth] Prefetched', contacts.length, 'contacts and', conversations.length, 'conversations');
-        } catch (error) {
-          console.log('[Auth] Prefetch error:', error);
-        }
-      }, 500);
-      
-      router.replace("/(main)/home");
-    }
+  // These functions are kept for compatibility but Clerk handles auth
+  const signIn = async (_email: string, _password: string) => {
+    // Clerk handles this in login.tsx
+    throw new Error('Use Clerk useSignIn hook in login.tsx');
   };
 
   const signUp = async (
-    email: string,
-    password: string,
-    name: string,
-    avatar?: string
+    _email: string,
+    _password: string,
+    _name: string,
+    _avatar?: string
   ) => {
-    const response = await authService.register(email, password, name, avatar || "");
-    if (response.token) {
-      await updateToken(response.token);
-      
-      // Try to connect socket (don't block)
-      connectSocket().catch(() => {});
-      
-      // Prefetch data IMMEDIATELY (no delay) for instant home screen load
-      setTimeout(async () => {
-        try {
-          const { fetchContactsFromAPI, fetchConversationsFromAPI } = await import("@/services/contactsService");
-          const { cacheContacts, cacheConversations } = await import("@/utils/network");
-          
-          const [contacts, conversations] = await Promise.all([
-            fetchContactsFromAPI(response.token, 1),
-            fetchConversationsFromAPI(response.token)
-          ]);
-          
-          // Cache immediately for instant load on home screen
-          if (contacts.length > 0) {
-            await cacheContacts(contacts);
-          }
-          if (conversations.length > 0) {
-            await cacheConversations(conversations);
-          }
-          
-          console.log('[Auth] Prefetched', contacts.length, 'contacts and', conversations.length, 'conversations');
-        } catch (error) {
-          console.log('[Auth] Prefetch error:', error);
-        }
-      }, 500);
-      
-      router.replace("/(main)/home");
-    }
+    // Clerk handles this in register.tsx
+    throw new Error('Use Clerk useSignUp hook in register.tsx');
+  };
+
+  const signInWithGoogle = async () => {
+    // Clerk handles OAuth - not implemented yet
+    throw new Error('Google Sign-In not implemented with Clerk yet');
   };
 
   const signOut = async () => {
+    console.log('[Auth] Signing out...');
     disconnectSocket();
+    await clerkSignOut();
     setToken(null);
     setUser(null);
-    await AsyncStorage.removeItem("token");
-    await AsyncStorage.removeItem("userData");
+    setProfileFetched(false); // Reset profile fetched flag
+    await AsyncStorage.removeItem('token');
     router.replace("/(auth)/welcome");
   };
 
   const refreshUser = (userData: UserProps) => {
-    setUser((prevUser) => ({
-      ...prevUser,
-      ...userData,
-    }));
-    AsyncStorage.setItem("userData", JSON.stringify(userData)).catch(() => {});
+    console.log('[Auth] Refreshing user data:', userData);
+    setUser((prevUser) => {
+      const updatedUser = {
+        ...prevUser,
+        ...userData,
+      };
+      console.log('[Auth] User updated:', updatedUser);
+      return updatedUser;
+    });
+  };
+
+  const refreshToken = async (): Promise<string | null> => {
+    try {
+      if (!clerkUser) return null;
+      const freshToken = await getToken({ skipCache: true });
+      if (freshToken) {
+        setToken(freshToken);
+        await AsyncStorage.setItem('token', freshToken);
+        console.log('[Auth] Token refreshed successfully');
+        return freshToken;
+      }
+      return null;
+    } catch (error) {
+      console.error('[Auth] Error refreshing token:', error);
+      return null;
+    }
   };
 
   return (
@@ -213,9 +220,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         user,
         signIn,
         signUp,
+        signInWithGoogle,
         signOut,
         updateToken,
         refreshUser,
+        refreshToken,
       }}
     >
       {children}

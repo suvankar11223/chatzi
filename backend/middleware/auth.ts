@@ -21,13 +21,28 @@ export const authenticateToken = async (req: Request, res: Response, next: NextF
       if (payload && payload.sub) {
         // Get user from Clerk
         const clerkUser = await clerkClient.users.getUser(payload.sub);
+        
+        console.log('='.repeat(60));
+        console.log('[AUTH] Clerk user retrieved:');
+        console.log('[AUTH]   - id:', clerkUser.id);
+        console.log('[AUTH]   - email:', clerkUser.emailAddresses[0]?.emailAddress);
+        console.log('[AUTH]   - firstName:', clerkUser.firstName);
+        console.log('[AUTH]   - username:', clerkUser.username);
+        console.log('[AUTH]   - imageUrl:', clerkUser.imageUrl);
+        console.log('[AUTH]   - imageUrl type:', typeof clerkUser.imageUrl);
+        console.log('[AUTH]   - profileImageUrl:', clerkUser.profileImageUrl);
+        console.log('='.repeat(60));
+        
         (req as any).user = {
           id: clerkUser.id,
           userId: clerkUser.id, // For backward compatibility
           email: clerkUser.emailAddresses[0]?.emailAddress,
           name: clerkUser.firstName || clerkUser.username || 'User',
-          avatar: clerkUser.imageUrl || null,
+          avatar: clerkUser.imageUrl || clerkUser.profileImageUrl || null,
         };
+        
+        console.log('[AUTH] Set req.user.avatar to:', (req as any).user.avatar);
+        
         return next();
       }
     } catch (clerkError) {

@@ -5,7 +5,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 // LOCAL BACKEND CONFIGURATION
 // ============================================
 // Using Render production backend
-const PRODUCTION_URL = "https://chatzi-1m0m.onrender.com";
+const PRODUCTION_URL = "https://chatzi-ilj9.onrender.com";
+
+// Export for voice message uploads
+export const SERVER_IP = "chatzi-ilj9.onrender.com";
+export const SERVER_PORT = "443"; // HTTPS port
 
 // ============================================
 // NETWORK STATE
